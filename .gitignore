@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+db.sqlite3
+.env
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins*
+mobile/android/
+mobile/ios/
+mobile/web/
+mobile/linux/
+mobile/macos/
+mobile/windows/
+
+# Secrets
+serviceAccountKey.json
