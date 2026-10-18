@@ -2,17 +2,18 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Semi-circular gauge showing the MQ-5 smoke/gas concentration in ppm.
-/// Danger threshold: > 1000 ppm (Chapter 3). Gauge is scaled 0–2000 ppm.
+/// Semi-circular gauge showing the MQ-5 smoke/gas level as the raw 12-bit
+/// ADC value from the ESP32 (0–4095, uncalibrated — not ppm).
+/// Thresholds match the firmware and backend (NOTIFIRE_GAS_*).
 class PpmGauge extends StatelessWidget {
   final double? ppm;
   final bool enabled;
 
   const PpmGauge({super.key, required this.ppm, required this.enabled});
 
-  static const double maxPpm = 2000;
-  static const double warningPpm = 700;
-  static const double dangerPpm = 1000;
+  static const double maxPpm = 4095;
+  static const double warningPpm = 1200;
+  static const double dangerPpm = 1500;
 
   Color get _color {
     if (!enabled || ppm == null) return Colors.grey;
@@ -62,10 +63,10 @@ class PpmGauge extends StatelessWidget {
                             color: _color),
                       ),
                       Text(
-                        !enabled ? 'Sensor disabled' : 'ppm',
+                        !enabled ? 'Sensor disabled' : 'raw (0–4095)',
                         style: TextStyle(
                             fontSize: 12,
-                            color: Colors.white.withOpacity(0.5)),
+                            color: Colors.white.withValues(alpha: 0.5)),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -78,13 +79,13 @@ class PpmGauge extends StatelessWidget {
               children: [
                 Text('0',
                     style: TextStyle(
-                        fontSize: 11, color: Colors.white.withOpacity(0.4))),
-                Text('Danger > ${dangerPpm.toInt()} ppm',
+                        fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
+                Text('Danger > ${dangerPpm.toInt()}',
                     style: TextStyle(
-                        fontSize: 11, color: Colors.white.withOpacity(0.4))),
+                        fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
                 Text('${maxPpm.toInt()}',
                     style: TextStyle(
-                        fontSize: 11, color: Colors.white.withOpacity(0.4))),
+                        fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
               ],
             ),
           ],
@@ -110,7 +111,7 @@ class _GaugePainter extends CustomPainter {
     const stroke = 16.0;
 
     final bgPaint = Paint()
-      ..color = Colors.white.withOpacity(0.08)
+      ..color = Colors.white.withValues(alpha: 0.08)
       ..style = PaintingStyle.stroke
       ..strokeWidth = stroke
       ..strokeCap = StrokeCap.round;
@@ -128,10 +129,10 @@ class _GaugePainter extends CustomPainter {
           startAngle, sweepAngle * fraction, false, fgPaint);
     }
 
-    // danger tick at 1000 ppm
+    // danger tick
     final tickAngle = startAngle + sweepAngle * (PpmGauge.dangerPpm / max);
     final tickPaint = Paint()
-      ..color = Colors.redAccent.withOpacity(0.8)
+      ..color = Colors.redAccent.withValues(alpha: 0.8)
       ..strokeWidth = 3;
     final inner = Offset(center.dx + (radius - 14) * math.cos(tickAngle),
         center.dy + (radius - 14) * math.sin(tickAngle));

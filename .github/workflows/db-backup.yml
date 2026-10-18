@@ -1,0 +1,39 @@
+name: Database backup
+
+# Daily encrypted dump of the NotiFire tables from Supabase (the free plan has
+# no backups of its own). Kept 30 days as a private workflow artifact.
+# Needs repository secrets: DATABASE_URL and BACKUP_PASSPHRASE.
+# Restore instructions: DEPLOYMENT.md → "Restoring a backup".
+on:
+  schedule:
+    - cron: "0 18 * * *"   # 02:00 Philippine time
+  workflow_dispatch:       # "Run workflow" button for a manual backup
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump and encrypt
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::Add DATABASE_URL and BACKUP_PASSPHRASE as repository secrets."
+            exit 1
+          fi
+          file="notifire-$(date -u +%Y%m%d-%H%M).dump"
+          # Postgres 17 client to match Supabase; only the app's public schema.
+          docker run --rm -e DATABASE_URL postgres:17 \
+            sh -c 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public' > "$file"
+          test -s "$file"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+            --symmetric --cipher-algo AES256 --output "$file.gpg" "$file"
+          rm "$file"
+          echo "BACKUP_FILE=$file.gpg" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_number }}
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 30

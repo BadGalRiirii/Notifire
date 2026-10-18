@@ -35,7 +35,7 @@ class StatusBanner extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [color.withOpacity(0.85), color.withOpacity(0.55)],
+          colors: [color.withValues(alpha: 0.85), color.withValues(alpha: 0.55)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -58,7 +58,7 @@ class StatusBanner extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(subtitle,
                     style: TextStyle(
-                        color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                        color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
               ],
             ),
           ),

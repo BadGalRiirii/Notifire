@@ -1,4 +1,10 @@
-Django>=5.0,<6.0
+Django>=5.2,<6.0
 djangorestframework>=3.15
-django-cors-headers>=4.3
 firebase-admin>=6.5
+python-dotenv>=1.0
+dj-database-url>=2.2
+psycopg[binary]>=3.2
+gunicorn>=23.0       # production server (Render, Linux)
+waitress>=3.0        # local server on Windows (run_local.ps1)
+whitenoise>=6.7
+sentry-sdk[django]>=2.0

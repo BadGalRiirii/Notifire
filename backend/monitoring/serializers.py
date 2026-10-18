@@ -1,34 +1,171 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import DetectionLog, DeviceState, SensorReading
+from .models import DetectionLog, Detector, SensorReading
+
+User = get_user_model()
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """The logged-in user, including verification state and notification
+    preferences (PATCH name / notify_* via /api/auth/me/)."""
+
+    name = serializers.CharField(source="first_name", max_length=150)
+    email_verified = serializers.BooleanField(source="profile.email_verified", read_only=True)
+    notify_danger = serializers.BooleanField(source="profile.notify_danger", required=False)
+    notify_warning = serializers.BooleanField(source="profile.notify_warning", required=False)
+    notify_offline = serializers.BooleanField(source="profile.notify_offline", required=False)
+
+    class Meta:
+        model = User
+        fields = ["id", "name", "email", "email_verified",
+                  "notify_danger", "notify_warning", "notify_offline"]
+        read_only_fields = ["id", "email"]
+
+    def validate_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Enter your name.")
+        return value.strip()
+
+    def update(self, instance, validated_data):
+        profile_data = validated_data.pop("profile", {})
+        if "first_name" in validated_data:
+            instance.first_name = validated_data["first_name"]
+            instance.save(update_fields=["first_name"])
+        if profile_data:
+            for field, value in profile_data.items():
+                setattr(instance.profile, field, value)
+            instance.profile.save(update_fields=list(profile_data))
+        return instance
+
+
+class RegisterSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value
+
+    def validate(self, attrs):
+        validate_password(attrs["password"], User(username=attrs["email"], email=attrs["email"],
+                                                  first_name=attrs["name"]))
+        return attrs
+
+    def create(self, validated_data):
+        # Email doubles as the username so login is by email.
+        return User.objects.create_user(
+            username=validated_data["email"],
+            email=validated_data["email"],
+            password=validated_data["password"],
+            first_name=validated_data["name"].strip(),
+        )
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+
+def _check_new_password(password, user):
+    validate_password(password, user)
+    return password
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if not user.check_password(attrs["current_password"]):
+            raise serializers.ValidationError({"current_password": "Your current password is incorrect."})
+        _check_new_password(attrs["new_password"], user)
+        return attrs
+
+
+class ChangeEmailSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+    new_email = serializers.EmailField()
+
+    def validate_new_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value
+
+    def validate_password(self, value):
+        if not self.context["request"].user.check_password(value):
+            raise serializers.ValidationError("Your password is incorrect.")
+        return value
+
+
+class CodeSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=12)
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=12)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+
+class DeleteAccountSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+
+
+class PushTokenSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=512)
 
 
 class SensorReadingSerializer(serializers.ModelSerializer):
     class Meta:
         model = SensorReading
-        fields = [
-            "id", "ppm", "temperature", "humidity",
-            "mq5_enabled", "level", "source", "created_at",
-        ]
-        read_only_fields = ["id", "level", "created_at"]
+        fields = ["id", "detector", "gas", "temperature", "humidity", "mq5_enabled", "level", "created_at"]
+
+
+class DetectorSerializer(serializers.ModelSerializer):
+    latest_reading = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Detector
+        fields = ["id", "room", "name", "code", "mq5_enabled", "last_seen_at", "created_at",
+                  "latest_reading"]
+        read_only_fields = ["id", "code", "last_seen_at", "created_at", "latest_reading"]
+        # Blank name → "<room> Detector" (see Detector.save).
+        extra_kwargs = {"name": {"required": False, "allow_blank": True}}
+
+    def validate_room(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Enter the room this detector is in.")
+        return value
+
+    def get_latest_reading(self, obj):
+        reading = obj.readings.first()
+        return SensorReadingSerializer(reading).data if reading else None
 
 
 class IngestSerializer(serializers.Serializer):
-    """Payload the ESP32 / simulator POSTs."""
+    """Payload the ESP32 POSTs. temperature/humidity are null on DHT22 error."""
 
-    ppm = serializers.FloatField(required=False, allow_null=True, min_value=0)
-    temperature = serializers.FloatField(min_value=-40, max_value=125)
-    humidity = serializers.FloatField(min_value=0, max_value=100)
-    source = serializers.CharField(required=False, default="esp32", max_length=32)
+    gas = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=4095)
+    temperature = serializers.FloatField(allow_null=True, min_value=-40, max_value=125)
+    humidity = serializers.FloatField(allow_null=True, min_value=0, max_value=100)
 
 
 class DetectionLogSerializer(serializers.ModelSerializer):
+    detector_name = serializers.CharField(source="detector.name", read_only=True)
+    room = serializers.CharField(source="detector.room", read_only=True)
+
     class Meta:
         model = DetectionLog
-        fields = ["id", "level", "message", "ppm", "temperature", "humidity", "created_at"]
-
-
-class DeviceStateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DeviceState
-        fields = ["mq5_enabled", "updated_at"]
+        fields = ["id", "detector", "detector_name", "room", "level", "message", "gas",
+                  "temperature", "humidity", "created_at"]

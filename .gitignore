@@ -4,9 +4,9 @@ __pycache__/
 *.pyc
 db.sqlite3
 .env
+backend/staticfiles/
 
 # Editor / tooling
-.claude/
 .vscode/
 .idea/
 
@@ -14,12 +14,21 @@ db.sqlite3
 mobile/.dart_tool/
 mobile/build/
 mobile/.flutter-plugins*
-mobile/android/
 mobile/ios/
 mobile/web/
 mobile/linux/
 mobile/macos/
 mobile/windows/
 
+# Built APKs
+*.apk
+*.aab
+
 # Secrets
+*.jks
+*.keystore
+key.properties
+google-services.json
+*firebase-adminsdk*.json
+*service-account*.json
 serviceAccountKey.json

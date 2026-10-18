@@ -1,13 +1,23 @@
 """
-Threshold classification — implements the multi-sensor decision logic from
-Chapter 3:
+Threshold classification — mirrors the alarm logic flashed on the ESP32 so
+the app and the on-device buzzer always agree:
 
-    DANGER  if MQ5 > 1000 ppm  OR  temp >= 55°C  OR  humidity >= 85 %RH
-    WARNING if approaching those thresholds
+    DANGER  if MQ-5 raw > 1500  OR  temp > 40°C  OR  humidity > 85 %RH
+    WARNING if gas or temperature are approaching those levels
     SAFE    otherwise
 
-When the MQ-5 sensor is toggled OFF from the app, ppm is excluded from the
-decision (temperature/humidity detection stays active).
+Humidity has no WARNING band: 75–84 %RH is a normal day in Cagayan de Oro,
+and humidity alone isn't a sign of fire, so it only counts at the device's
+danger level.
+
+The MQ-5 value is the raw 12-bit ADC reading (0–4095), not ppm.
+
+When the MQ-5 sensor is toggled OFF from the app, gas is excluded from the
+decision (temperature/humidity detection stays active). A DHT22 value that
+is missing (sensor error) is skipped, same as on the device.
+
+Messages are shown to users (app history, push notifications): keep them
+short and plain.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -25,26 +35,25 @@ class Classification:
         return "; ".join(self.reasons) if self.reasons else "Normal conditions"
 
 
-def classify(ppm: Optional[float], temperature: float, humidity: float,
+def classify(gas: Optional[float], temperature: Optional[float], humidity: Optional[float],
              mq5_enabled: bool = True) -> Classification:
     danger_reasons: list[str] = []
     warning_reasons: list[str] = []
 
-    if mq5_enabled and ppm is not None:
-        if ppm > settings.NOTIFIRE_PPM_DANGER:
-            danger_reasons.append(f"Smoke/gas level {ppm:.0f} ppm exceeds {settings.NOTIFIRE_PPM_DANGER:.0f} ppm")
-        elif ppm > settings.NOTIFIRE_PPM_WARNING:
-            warning_reasons.append(f"Smoke/gas level rising ({ppm:.0f} ppm)")
+    if mq5_enabled and gas is not None:
+        if gas > settings.NOTIFIRE_GAS_DANGER:
+            danger_reasons.append(f"Smoke or gas detected (level {gas:.0f})")
+        elif gas > settings.NOTIFIRE_GAS_WARNING:
+            warning_reasons.append(f"Smoke or gas is rising (level {gas:.0f})")
 
-    if temperature >= settings.NOTIFIRE_TEMP_DANGER:
-        danger_reasons.append(f"Temperature {temperature:.1f}°C exceeds {settings.NOTIFIRE_TEMP_DANGER:.0f}°C")
-    elif temperature >= settings.NOTIFIRE_TEMP_WARNING:
-        warning_reasons.append(f"Temperature rising ({temperature:.1f}°C)")
+    if temperature is not None:
+        if temperature > settings.NOTIFIRE_TEMP_DANGER:
+            danger_reasons.append(f"Very high temperature ({temperature:.1f}°C)")
+        elif temperature >= settings.NOTIFIRE_TEMP_WARNING:
+            warning_reasons.append(f"Temperature is rising ({temperature:.1f}°C)")
 
-    if humidity >= settings.NOTIFIRE_HUM_DANGER:
-        danger_reasons.append(f"Humidity {humidity:.0f}%RH exceeds {settings.NOTIFIRE_HUM_DANGER:.0f}%RH")
-    elif humidity >= settings.NOTIFIRE_HUM_WARNING:
-        warning_reasons.append(f"Humidity rising ({humidity:.0f}%RH)")
+    if humidity is not None and humidity > settings.NOTIFIRE_HUM_DANGER:
+        danger_reasons.append(f"Very high humidity ({humidity:.1f}%)")
 
     if danger_reasons:
         return Classification("DANGER", danger_reasons)

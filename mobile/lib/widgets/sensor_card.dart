@@ -46,7 +46,7 @@ class SensorCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(subtitle,
                 style: TextStyle(
-                    fontSize: 11, color: Colors.white.withOpacity(0.45))),
+                    fontSize: 11, color: Colors.white.withValues(alpha: 0.45))),
           ],
         ),
       ),

@@ -1,0 +1,60 @@
+# Render Blueprint — creates the NotiFire API and its offline-alert cron job.
+# Render dashboard → New → Blueprint → pick this repo. You'll be asked for the
+# secret values marked `sync: false` (see DEPLOYMENT.md).
+
+envVarGroups:
+  - name: notifire-shared
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL            # Supabase "Session pooler" connection string
+        sync: false
+      - key: EMAIL_HOST_USER         # your Gmail address
+        sync: false
+      - key: EMAIL_HOST_PASSWORD     # Gmail App Password (16 letters)
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON   # whole service-account JSON file
+        sync: false
+      - key: SENTRY_DSN              # optional error tracking; leave blank to skip
+        sync: false
+
+services:
+  - type: web
+    name: notifire-api
+    runtime: python
+    region: singapore             # closest Render region to the PH and to Supabase (Sydney)
+    plan: starter                 # always on — free instances sleep, unsafe for alarms
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    preDeployCommand: python manage.py migrate --noinput
+    # 2 workers × 4 threads = at most 8 DB connections (Supabase pool: 15).
+    startCommand: gunicorn notifire_backend.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 30 --access-logfile -
+    healthCheckPath: /api/health/
+    autoDeployTrigger: checksPass  # deploy only after GitHub CI passes
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: NOTIFIRE_FORCE_HTTPS
+        value: "1"
+      - key: DB_CONN_MAX_AGE
+        value: "60"
+      - fromGroup: notifire-shared
+
+  - type: cron
+    name: notifire-offline-check
+    runtime: python
+    region: singapore
+    plan: starter
+    schedule: "*/5 * * * *"       # every 5 minutes
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py check_offline
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_DEBUG
+        value: "0"
+      - fromGroup: notifire-shared

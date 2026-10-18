@@ -2,175 +2,674 @@
  * NotiFire — Solar-Powered IoT-Based Smoke and Fire Detection System
  * ESP32 firmware (Grade 11 STEM 24 — Group 3)
  *
- * HARDWARE-READY PLACEHOLDER:
- * This sketch is structured for the real hardware (MQ-5 + DHT22 + buzzer
- * + LEDs) but works out-of-the-box even before parts arrive — flip
- * USE_FAKE_DATA to true and it sends simulated readings to the Django
- * backend, which is the exact same pipeline the app already consumes.
+ * Reads MQ-5 (smoke/gas) + DHT22 (temperature/humidity), drives the local
+ * LED + buzzer alarm, and POSTs every reading to the Django backend.
  *
- * Wiring (matches Chapter 3 hardware specifications):
- *   MQ-5 analog out  -> GPIO 34 (ADC1_CH6)
+ * ONE SKETCH FOR EVERY DETECTOR — nothing to edit per device.
+ * Setup is done entirely from the NotiFire app over Bluetooth:
+ *   - A new (or reset) ESP32 starts in SETUP MODE: the LED blinks and it
+ *     advertises over Bluetooth as "NotiFire-XXXX".
+ *   - In the app: Add detector → the app finds the device, asks it to scan
+ *     for Wi-Fi, and sends the chosen Wi-Fi + password + detector code +
+ *     server address. The ESP32 connects, checks the server accepts its
+ *     code, saves everything to flash and restarts in normal mode.
+ *   - To set it up again (new Wi-Fi, another room), hold BOOT for 5 seconds.
+ *
+ * The local alarm never depends on Wi-Fi: during setup or with the network
+ * down, the buzzer still sounds and readings are simply not uploaded.
+ *
+ * Wiring:
+ *   MQ-5 analog out  -> GPIO 34 (ADC1 — safe to use with Wi-Fi on)
  *   DHT22 data       -> GPIO 4  (10k pull-up to 3.3V)
- *   Active buzzer    -> GPIO 25
- *   Red LED          -> GPIO 26 (220R series resistor)
- *   Green LED        -> GPIO 27 (220R series resistor)
+ *   Status LED       -> GPIO 2  (onboard LED; blinks in setup mode)
+ *   Buzzer           -> GPIO 13 (PWM tone)
+ *   Reset button     -> GPIO 0  (onboard BOOT button)
  *
+ * Board: ESP32 Dev Module, ESP32 Arduino Core 3.x.
+ * Tools > Partition Scheme > "Huge APP (3MB No OTA/1MB SPIFFS)" — Wi-Fi +
+ * Bluetooth together do not fit in the default partition.
  * Libraries (Arduino IDE > Library Manager):
  *   - "DHT sensor library" by Adafruit (+ Adafruit Unified Sensor)
- *   - ArduinoJson by Benoit Blanchon
+ *   - ArduinoJson by Benoit Blanchon (v7)
+ *   (Bluetooth, Wi-Fi, HTTP and Preferences come with the ESP32 core.)
  */
 
 #include <WiFi.h>
+#include <NetworkClientSecure.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <ArduinoJson.h>
-
-// ============================ CONFIG =======================================
-#define USE_FAKE_DATA true   // <— set to false once MQ-5 + DHT22 are wired
-
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-
-// Django backend — your PC's LAN IP while prototyping
-// (run: python manage.py runserver 0.0.0.0:8000)
-const char* SERVER_URL = "http://192.168.1.100:8000/api/readings/ingest/";
-
-const unsigned long SEND_INTERVAL_MS = 3000;
-
-// Thresholds (Chapter 3 requirements analysis) — local alerts fire on-device
-const float PPM_DANGER  = 1000.0;  // MQ-5 > 1000 ppm
-const float TEMP_DANGER = 55.0;    // DHT22 >= 55 C (EN 54-5 Class C)
-const float HUM_DANGER  = 85.0;    // >= 85 %RH
-
-// Pins
-const int PIN_MQ5_ANALOG = 34;
-const int PIN_DHT        = 4;
-const int PIN_BUZZER     = 25;
-const int PIN_LED_RED    = 26;
-const int PIN_LED_GREEN  = 27;
-
-// ===========================================================================
-#if !USE_FAKE_DATA
-  #include <DHT.h>
-  #define DHTTYPE DHT22
-  DHT dht(PIN_DHT, DHTTYPE);
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#ifdef CONFIG_BLUEDROID_ENABLED
+#include <BLE2902.h>
 #endif
+#include "DHT.h"
+#include "root_ca.h"
 
-bool mq5Enabled = true;          // synced from the app via backend response
-unsigned long lastSend = 0;
+#define FW_VERSION "2.2"
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(PIN_BUZZER, OUTPUT);
-  pinMode(PIN_LED_RED, OUTPUT);
-  pinMode(PIN_LED_GREEN, OUTPUT);
-  digitalWrite(PIN_LED_GREEN, HIGH);
+const char* INGEST_PATH = "/api/readings/ingest/";
+const char* CHECK_PATH  = "/api/device/check/";
 
-#if !USE_FAKE_DATA
-  dht.begin();
-  // NOTE: MQ-5 needs >= 48h preheating per Winsen datasheet before analog
-  // output is stable enough for threshold alarming (see Chapter 3).
-#endif
+// Bluetooth setup protocol — must match mobile/lib/services/device_setup.dart
+#define SETUP_SERVICE_UUID "8f3b0001-6c4e-4f1a-9a57-2b1c7e5d4a10"
+#define COMMAND_CHAR_UUID  "8f3b0002-6c4e-4f1a-9a57-2b1c7e5d4a10"  // app -> ESP32 (write)
+#define EVENT_CHAR_UUID    "8f3b0003-6c4e-4f1a-9a57-2b1c7e5d4a10"  // ESP32 -> app (notify)
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+// The server (Render, Singapore) talks to a database in Sydney, so a request
+// can take ~1 s. Uploads happen after the alarm is set, so a slow request
+// never delays the buzzer — it only delays the next reading slightly.
+const uint16_t HTTP_TIMEOUT_MS = 5000;
+
+// ==================== ESP32 PIN CONFIGURATION ====================
+#define DHTPIN       4
+#define DHTTYPE      DHT22
+#define MQ5PIN       34
+#define LED_PIN      2
+#define BUZZER_PIN   13
+#define RESET_PIN    0      // onboard BOOT button (LOW when pressed)
+
+// ==================== BUZZER PWM SETTINGS ====================
+#define ALARM_PITCH 2000
+#define PWM_RESOLUTION 8
+
+// ==================== SAFETY THRESHOLDS ====================
+// Keep these in sync with NOTIFIRE_*_DANGER in backend/notifire_backend/settings.py
+const float TEMP_THRESHOLD = 40.0;
+const float HIGH_HUMID_THRESHOLD = 85.0;
+const int GAS_THRESHOLD = 1500;         // raw 12-bit ADC (0–4095), not ppm
+
+// ==================== TIMING ====================
+const unsigned long SENSOR_INTERVAL      = 2000;   // read sensors + drive alarm
+const unsigned long UPLOAD_INTERVAL      = 5000;   // send to server (sooner if alarm changes)
+const unsigned long WARMUP_MS            = 20000;  // MQ-5 heater warm-up after power-on
+const unsigned long RESET_HOLD_MS        = 5000;
+const unsigned long WIFI_SETUP_TIMEOUT   = 20000;
+const unsigned long SETUP_BLINK_MS       = 500;
+
+DHT dht(DHTPIN, DHTTYPE);
+Preferences prefs;
+
+// One persistent connection to the server: HTTPS (certificate-checked
+// against root_ca.h) for https:// addresses, plain for http:// (local tests).
+// Reusing it avoids a ~1 s TLS handshake on every upload.
+NetworkClientSecure secureClient;
+NetworkClient plainClient;
+HTTPClient http;
+
+// Saved settings (written by Bluetooth setup)
+String wifiSsid, wifiPass, detectorCode, serverUrl;
+String deviceName;          // "NotiFire-XXXX"
+bool setupMode = false;
+
+// Bluetooth state
+BLECharacteristic* eventChar = nullptr;
+volatile bool bleConnected = false;
+volatile bool commandPending = false;
+String pendingCommand;
+
+// Wi-Fi provisioning state machine (setup mode only)
+enum ProvState { PROV_IDLE, PROV_CONNECTING, PROV_CHECKING };
+ProvState provState = PROV_IDLE;
+unsigned long provStartedAt = 0;
+volatile uint8_t lastDisconnectReason = 0;
+volatile uint8_t authFailures = 0;
+String provSsid, provPass, provCode, provServer;
+
+unsigned long lastReadTime = 0;
+unsigned long lastUploadAt = 0;
+bool lastUploadedAlarm = false;
+unsigned long resetPressedAt = 0;
+unsigned long lastBlinkAt = 0;
+bool warmupDone = false;
+bool mq5Enabled = true;     // synced from the app via backend response
+bool alarmActive = false;
+bool wasWifiConnected = false;
+
+// ==================== SETTINGS ====================
+void loadSettings() {
+  prefs.begin("notifire", true);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  detectorCode = prefs.getString("code", "");
+  serverUrl = prefs.getString("server", "");
+  prefs.end();
+}
+
+void saveSettings() {
+  prefs.begin("notifire", false);
+  prefs.putString("ssid", provSsid);
+  prefs.putString("pass", provPass);
+  prefs.putString("code", provCode);
+  prefs.putString("server", provServer);
+  prefs.end();
+}
+
+// Opens (or reuses) the connection for a request to `url`.
+bool beginRequest(const String& url, uint16_t timeoutMs) {
+  http.setReuse(true);
+  http.setConnectTimeout(timeoutMs);
+  http.setTimeout(timeoutMs);
+  bool ok = url.startsWith("https://") ? http.begin(secureClient, url)
+                                       : http.begin(plainClient, url);
+  if (!ok) Serial.println("HTTP: invalid server address");
+  return ok;
+}
+
+String normalizeServer(String server) {
+  server.trim();
+  if (server.length() == 0) return server;
+  if (!server.startsWith("http://") && !server.startsWith("https://")) {
+    server = "http://" + server;
   }
-  Serial.println("\nWiFi connected: " + WiFi.localIP().toString());
+  while (server.endsWith("/")) server.remove(server.length() - 1);
+  return server;
 }
 
-float readPpm() {
-#if USE_FAKE_DATA
-  // Simulated MQ-5: baseline 150–400 ppm with occasional spikes
-  static float ppm = 250;
-  if (random(100) < 4) ppm += random(300, 900);      // random spike
-  ppm += (250 - ppm) * 0.15 + random(-30, 31);        // drift to baseline
-  return max(50.0f, ppm);
-#else
-  // Real MQ-5: map 12-bit ADC (0–4095 @ 3.3V) to an approximate ppm value.
-  // Calibrate against the 2.5–4.0V @ 1000 ppm datasheet spec after the
-  // 48-hour preheat and baseline (clean-air Rs) measurement.
-  int raw = analogRead(PIN_MQ5_ANALOG);
-  float voltage = raw * (3.3f / 4095.0f);
-  float ppm = (voltage / 2.5f) * 1000.0f;             // placeholder mapping
-  return ppm;
+// Hold BOOT for 5 s: wipe all settings and restart into setup mode.
+void checkResetButton() {
+  if (digitalRead(RESET_PIN) == LOW) {
+    if (resetPressedAt == 0) resetPressedAt = millis();
+    if (millis() - resetPressedAt >= RESET_HOLD_MS) {
+      Serial.println("BOOT held 5 s — clearing settings and restarting into setup mode...");
+      prefs.begin("notifire", false);
+      prefs.clear();
+      prefs.end();
+      WiFi.disconnect(true, true);
+      delay(300);
+      ESP.restart();
+    }
+  } else {
+    resetPressedAt = 0;
+  }
+}
+
+// ==================== BLUETOOTH SETUP ====================
+class SetupServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) override {
+    bleConnected = true;
+    Serial.println("Bluetooth: NotiFire app connected");
+  }
+  void onDisconnect(BLEServer* server) override {
+    bleConnected = false;
+    Serial.println("Bluetooth: app disconnected");
+    BLEDevice::startAdvertising();  // allow the app to reconnect / retry
+  }
+};
+
+class CommandCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* characteristic) override {
+    if (commandPending) return;  // still handling the previous command
+    pendingCommand = characteristic->getValue();
+    commandPending = true;       // handled in loop(), not on the BLE task
+  }
+};
+
+void sendEvent(JsonDocument& doc) {
+  if (eventChar == nullptr) return;
+  String json;
+  serializeJson(doc, json);
+  eventChar->setValue(json);
+  if (bleConnected) eventChar->notify();
+  delay(15);  // let the BLE stack send before the next notification
+}
+
+void sendStatus(const char* state, const char* reason = nullptr) {
+  JsonDocument doc;
+  doc["type"] = "status";
+  doc["state"] = state;
+  if (reason) doc["reason"] = reason;
+  sendEvent(doc);
+}
+
+void startBluetoothSetup() {
+  BLEDevice::init(deviceName);
+  BLEDevice::setMTU(517);  // room for Wi-Fi password + code in one write
+  BLEServer* server = BLEDevice::createServer();
+  server->setCallbacks(new SetupServerCallbacks());
+
+  BLEService* service = server->createService(SETUP_SERVICE_UUID);
+  BLECharacteristic* commandChar =
+      service->createCharacteristic(COMMAND_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
+  commandChar->setCallbacks(new CommandCallbacks());
+  eventChar = service->createCharacteristic(
+      EVENT_CHAR_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+#ifdef CONFIG_BLUEDROID_ENABLED
+  eventChar->addDescriptor(new BLE2902());
 #endif
+  service->start();
+
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(SETUP_SERVICE_UUID);
+  advertising->setScanResponse(true);
+  BLEDevice::startAdvertising();
 }
 
-float readTemperature() {
-#if USE_FAKE_DATA
-  static float t = 28.0;
-  t += (28.0 - t) * 0.1 + (random(-10, 11) / 10.0);
-  return t;
-#else
-  float t = dht.readTemperature();
-  return isnan(t) ? -1 : t;
-#endif
+void scanWifiNetworks() {
+  if (provState != PROV_IDLE) return;
+  Serial.println("Bluetooth: scanning Wi-Fi networks for the app...");
+  WiFi.disconnect();
+  int found = WiFi.scanNetworks();
+  int sent = 0;
+  for (int i = 0; i < found && sent < 20; i++) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) continue;  // hidden network
+    bool duplicate = false;
+    for (int j = 0; j < i; j++) {
+      if (WiFi.SSID(j) == ssid) { duplicate = true; break; }
+    }
+    if (duplicate) continue;
+
+    JsonDocument doc;
+    doc["type"] = "network";
+    doc["ssid"] = ssid;
+    doc["rssi"] = WiFi.RSSI(i);
+    doc["secure"] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+    sendEvent(doc);
+    sent++;
+  }
+  WiFi.scanDelete();
+
+  JsonDocument done;
+  done["type"] = "scan_done";
+  done["count"] = sent;
+  sendEvent(done);
+  Serial.print("Bluetooth: sent ");
+  Serial.print(sent);
+  Serial.println(" Wi-Fi networks");
 }
 
-float readHumidity() {
-#if USE_FAKE_DATA
-  static float h = 76.0;
-  h += (76.0 - h) * 0.1 + (random(-15, 16) / 10.0);
-  return constrain(h, 40, 100);
-#else
-  float h = dht.readHumidity();
-  return isnan(h) ? -1 : h;
-#endif
-}
-
-void setAlerts(bool danger) {
-  digitalWrite(PIN_BUZZER, danger ? HIGH : LOW);
-  digitalWrite(PIN_LED_RED, danger ? HIGH : LOW);
-  digitalWrite(PIN_LED_GREEN, danger ? LOW : HIGH);
-}
-
-void loop() {
-  if (millis() - lastSend < SEND_INTERVAL_MS) return;
-  lastSend = millis();
-
-  float ppm  = readPpm();
-  float temp = readTemperature();
-  float hum  = readHumidity();
-
-  // Local alert logic — Chapter 3: smoke>1000ppm OR temp>=55C OR RH>=85%
-  bool danger = (mq5Enabled && ppm > PPM_DANGER) ||
-                (temp >= TEMP_DANGER) ||
-                (hum >= HUM_DANGER);
-  setAlerts(danger);
-
-  Serial.printf("[%s] ppm=%.0f temp=%.1fC hum=%.0f%% mq5=%s\n",
-                danger ? "DANGER" : "ok", ppm, temp, hum,
-                mq5Enabled ? "on" : "off");
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi lost — reconnecting...");
-    WiFi.reconnect();
+void startProvisioning(JsonDocument& doc) {
+  provSsid = (const char*)(doc["ssid"] | "");
+  provPass = (const char*)(doc["password"] | "");
+  provCode = (const char*)(doc["code"] | "");
+  provServer = normalizeServer((const char*)(doc["server"] | ""));
+  provCode.trim();
+  provCode.toUpperCase();
+  if (provSsid.length() == 0 || provCode.length() == 0 || provServer.length() == 0) {
+    sendStatus("failed", "bad_request");
     return;
   }
 
-  HTTPClient http;
-  http.begin(SERVER_URL);
-  http.addHeader("Content-Type", "application/json");
+  Serial.print("Bluetooth: connecting to Wi-Fi \"");
+  Serial.print(provSsid);
+  Serial.println("\"...");
+  authFailures = 0;
+  lastDisconnectReason = 0;
+  WiFi.disconnect();
+  WiFi.begin(provSsid.c_str(), provPass.c_str());
+  provState = PROV_CONNECTING;
+  provStartedAt = millis();
+  sendStatus("connecting_wifi");
+}
+
+// Three short beeps + LED flashes so the user can tell which physical device
+// the app is connected to when several are being set up.
+void identifyBeep() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    ledcWriteTone(BUZZER_PIN, ALARM_PITCH);
+    ledcWrite(BUZZER_PIN, 128);
+    delay(120);
+    digitalWrite(LED_PIN, LOW);
+    ledcWrite(BUZZER_PIN, 0);
+    ledcWriteTone(BUZZER_PIN, 0);
+    delay(120);
+  }
+}
+
+void handleCommand(const String& json) {
+  JsonDocument doc;
+  if (deserializeJson(doc, json)) {
+    sendStatus("failed", "bad_request");
+    return;
+  }
+  const char* cmd = doc["cmd"] | "";
+  if (strcmp(cmd, "hello") == 0) {
+    JsonDocument hello;
+    hello["type"] = "hello";
+    hello["device"] = deviceName;
+    hello["fw"] = FW_VERSION;
+    sendEvent(hello);
+    if (!alarmActive) identifyBeep();
+  } else if (strcmp(cmd, "identify") == 0) {
+    if (!alarmActive) identifyBeep();  // never interrupt a real alarm
+  } else if (strcmp(cmd, "scan") == 0) {
+    scanWifiNetworks();
+  } else if (strcmp(cmd, "provision") == 0) {
+    startProvisioning(doc);
+  }
+}
+
+// Runs every loop() in setup mode: connect to Wi-Fi, then confirm the server
+// accepts this detector's code before saving anything.
+void provisioningTick() {
+  if (provState == PROV_CONNECTING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      JsonDocument doc;
+      doc["type"] = "status";
+      doc["state"] = "wifi_connected";
+      doc["ip"] = WiFi.localIP().toString();
+      sendEvent(doc);
+      provState = PROV_CHECKING;
+      return;
+    }
+    const char* reason = nullptr;
+    unsigned long elapsed = millis() - provStartedAt;
+    if (authFailures >= 2) {
+      reason = "wrong_password";
+    } else if (elapsed > WIFI_SETUP_TIMEOUT) {
+      if (authFailures > 0) reason = "wrong_password";
+      else if (lastDisconnectReason == WIFI_REASON_NO_AP_FOUND) reason = "network_not_found";
+      else reason = "wifi_timeout";
+    }
+    if (reason) {
+      Serial.print("Bluetooth: Wi-Fi failed (");
+      Serial.print(reason);
+      Serial.println(")");
+      WiFi.disconnect();
+      provState = PROV_IDLE;
+      sendStatus("failed", reason);
+    }
+  } else if (provState == PROV_CHECKING) {
+    sendStatus("checking_server");
+    int code = -1;
+    String body;
+    if (beginRequest(provServer + CHECK_PATH, 10000)) {  // first TLS handshake is slow
+      http.addHeader("X-Detector-Code", provCode);
+      code = http.GET();
+      body = code > 0 ? http.getString() : "";
+      http.end();
+    }
+
+    if (code == 200) {
+      saveSettings();
+      JsonDocument resp;
+      deserializeJson(resp, body);
+      JsonDocument doc;
+      doc["type"] = "status";
+      doc["state"] = "done";
+      doc["room"] = resp["room"] | "";
+      sendEvent(doc);
+      Serial.println("Setup complete — restarting in normal mode...");
+      delay(1500);  // let the "done" message reach the app
+      ESP.restart();
+    } else {
+      Serial.print("Bluetooth: server check failed (HTTP ");
+      Serial.print(code);
+      Serial.println(")");
+      WiFi.disconnect();
+      provState = PROV_IDLE;
+      JsonDocument doc;
+      doc["type"] = "status";
+      doc["state"] = "failed";
+      doc["reason"] = code == 403 ? "bad_code" : "server_unreachable";
+      doc["http"] = code;
+      sendEvent(doc);
+    }
+  }
+}
+
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event != ARDUINO_EVENT_WIFI_STA_DISCONNECTED) return;
+  uint8_t reason = info.wifi_sta_disconnected.reason;
+  lastDisconnectReason = reason;
+  if (reason == WIFI_REASON_AUTH_FAIL || reason == WIFI_REASON_AUTH_EXPIRE ||
+      reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT || reason == WIFI_REASON_HANDSHAKE_TIMEOUT) {
+    authFailures = authFailures + 1;
+  }
+}
+
+void blinkSetupLed() {
+  if (alarmActive) return;  // alarm keeps the LED solid on
+  if (millis() - lastBlinkAt >= SETUP_BLINK_MS) {
+    lastBlinkAt = millis();
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+  }
+}
+
+void reportWifiChanges() {
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (connected == wasWifiConnected) return;
+  wasWifiConnected = connected;
+  if (connected) {
+    Serial.print("WiFi connected: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi disconnected — reconnecting automatically...");
+  }
+}
+
+// ==================== UPLOAD ====================
+void sendReading(int gasValue, float temperature, bool validTemperature,
+                 float humidity, bool validHumidity) {
+  if (setupMode) {
+    Serial.println("Upload: skipped (setup mode — open the NotiFire app and tap Add detector)");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Upload: skipped (no WiFi)");
+    return;
+  }
 
   JsonDocument doc;
-  doc["ppm"] = ppm;
-  doc["temperature"] = temp;
-  doc["humidity"] = hum;
-  doc["source"] = "esp32";
+  doc["gas"] = gasValue;
+  if (validTemperature) doc["temperature"] = temperature;
+  else doc["temperature"] = nullptr;
+  if (validHumidity) doc["humidity"] = humidity;
+  else doc["humidity"] = nullptr;
+
   String body;
   serializeJson(doc, body);
 
+  if (!beginRequest(serverUrl + INGEST_PATH, HTTP_TIMEOUT_MS)) return;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Detector-Code", detectorCode);
+
   int code = http.POST(body);
   if (code == 201) {
-    // Backend echoes the app-controlled MQ-5 toggle — sync it locally.
+    // Backend echoes this detector's app-controlled MQ-5 toggle.
     JsonDocument resp;
     if (deserializeJson(resp, http.getString()) == DeserializationError::Ok) {
-      mq5Enabled = resp["mq5_enabled"] | true;
+      bool enabled = resp["mq5_enabled"] | true;
+      if (enabled != mq5Enabled) {
+        mq5Enabled = enabled;
+        Serial.print("MQ-5 toggled from app: ");
+        Serial.println(mq5Enabled ? "ON" : "OFF");
+      }
     }
+    Serial.println("Upload: OK");
+  } else if (code == 403) {
+    Serial.println("Upload: this detector was deleted in the app. Hold BOOT 5 s and set it up again.");
+  } else if (code == 429) {
+    Serial.println("Upload: server rate limit reached — slowing down.");
   } else {
-    Serial.printf("POST failed: %d\n", code);
+    Serial.print("Upload: failed (HTTP ");
+    Serial.print(code);
+    Serial.print(") to ");
+    Serial.println(serverUrl);
   }
   http.end();
+}
+
+// ==================== SETUP ====================
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(MQ5PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(RESET_PIN, INPUT_PULLUP);
+
+  // Keep LED OFF during startup
+  digitalWrite(LED_PIN, LOW);
+
+  // Initialize buzzer PWM (ESP32 Arduino Core 3.x)
+  ledcAttach(BUZZER_PIN, ALARM_PITCH, PWM_RESOLUTION);
+  ledcWrite(BUZZER_PIN, 0);
+
+  // HTTPS: verify the server's certificate against the bundled roots.
+  secureClient.setCACert(ROOT_CA_BUNDLE);
+  secureClient.setHandshakeTimeout(15);  // seconds
+
+  // Start DHT22
+  dht.begin();
+
+  uint64_t mac = ESP.getEfuseMac();
+  char name[20];
+  snprintf(name, sizeof(name), "NotiFire-%04X", (uint16_t)(mac >> 32));
+  deviceName = name;
+
+  Serial.println();
+  Serial.println("==========================================");
+  Serial.println(" NOTIFIRE — ESP32 GAS & ENVIRONMENT MONITOR");
+  Serial.println("==========================================");
+
+  loadSettings();
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+
+  setupMode = wifiSsid.length() == 0 || detectorCode.length() == 0 || serverUrl.length() == 0;
+  if (setupMode) {
+    startBluetoothSetup();
+    Serial.println("SETUP MODE (LED blinking).");
+    Serial.println("Open the NotiFire app and tap \"Add detector\" — it will find this device:");
+    Serial.print("  Bluetooth name: ");
+    Serial.println(deviceName);
+  } else {
+    Serial.print("Connecting to WiFi \"");
+    Serial.print(wifiSsid);
+    Serial.println("\"...");
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  }
+
+  Serial.println("Warming up MQ-5 for 20 seconds before monitoring...");
+}
+
+// ==================== MAIN LOOP ====================
+void loop() {
+  checkResetButton();
+
+  if (setupMode) {
+    if (commandPending) {
+      String command = pendingCommand;
+      commandPending = false;
+      handleCommand(command);
+    }
+    provisioningTick();
+    blinkSetupLed();
+  } else {
+    reportWifiChanges();
+  }
+
+  unsigned long currentTime = millis();
+
+  if (!warmupDone) {
+    if (currentTime < WARMUP_MS) return;
+    warmupDone = true;
+    Serial.println("Warm-up completed. Monitoring sensors...");
+  }
+
+  // Read sensors every 2 seconds
+  if (currentTime - lastReadTime < SENSOR_INTERVAL) {
+    return;
+  }
+
+  lastReadTime = currentTime;
+
+  // ==================== READ SENSORS ====================
+  int gasValue = analogRead(MQ5PIN);
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  Serial.println("\n-------- SENSOR DATA --------");
+
+  Serial.print("Gas Level: ");
+  Serial.print(gasValue);
+  Serial.println(mq5Enabled ? "" : " (MQ-5 disabled from app)");
+
+  bool validTemperature = !isnan(temperature);
+  bool validHumidity = !isnan(humidity);
+
+  if (validTemperature) {
+    Serial.print("Temperature: ");
+    Serial.print(temperature, 1);
+    Serial.println(" C");
+  } else {
+    Serial.println("Temperature: SENSOR ERROR");
+  }
+
+  if (validHumidity) {
+    Serial.print("Humidity: ");
+    Serial.print(humidity, 1);
+    Serial.println(" %");
+  } else {
+    Serial.println("Humidity: SENSOR ERROR");
+  }
+
+  // ==================== CHECK THRESHOLDS ====================
+  bool gasAlert = mq5Enabled && gasValue > GAS_THRESHOLD;
+
+  bool temperatureAlert =
+      validTemperature && temperature > TEMP_THRESHOLD;
+
+  bool humidityAlert =
+      validHumidity && humidity > HIGH_HUMID_THRESHOLD;
+
+  // Trigger if ANY valid sensor reaches its threshold
+  bool alarmTriggered =
+      gasAlert || temperatureAlert || humidityAlert;
+  alarmActive = alarmTriggered;
+
+  // ==================== CONTROL LED & BUZZER ====================
+  if (alarmTriggered) {
+    digitalWrite(LED_PIN, HIGH);
+
+    // Continuous buzzer tone
+    ledcWriteTone(BUZZER_PIN, ALARM_PITCH);
+    ledcWrite(BUZZER_PIN, 128);
+
+    Serial.println("!!! ALERT ACTIVATED !!!");
+
+    if (gasAlert) {
+      Serial.println("Reason: High gas reading.");
+    }
+
+    if (temperatureAlert) {
+      Serial.println("Reason: High temperature.");
+    }
+
+    if (humidityAlert) {
+      Serial.println("Reason: High humidity.");
+    }
+
+    Serial.println("LED: ON");
+    Serial.println("BUZZER: ON");
+
+  } else {
+    if (!setupMode) digitalWrite(LED_PIN, LOW);  // setup mode keeps blinking
+
+    // Stop buzzer
+    ledcWrite(BUZZER_PIN, 0);
+    ledcWriteTone(BUZZER_PIN, 0);
+
+    Serial.println("Status: NORMAL");
+    Serial.println(setupMode ? "LED: BLINKING (setup mode)" : "LED: OFF");
+    Serial.println("BUZZER: OFF");
+  }
+
+  // ==================== UPLOAD TO BACKEND ====================
+  // Done after the alarm is set, so a slow network never delays the buzzer.
+  // Every UPLOAD_INTERVAL, or right away when the alarm turns on/off so the
+  // app and push notification follow within seconds.
+  bool alarmChanged = alarmTriggered != lastUploadedAlarm;
+  if (alarmChanged || lastUploadAt == 0 || currentTime - lastUploadAt >= UPLOAD_INTERVAL) {
+    lastUploadAt = currentTime;
+    lastUploadedAlarm = alarmTriggered;
+    sendReading(gasValue, temperature, validTemperature, humidity, validHumidity);
+  }
+
+  Serial.println("-----------------------------");
 }
