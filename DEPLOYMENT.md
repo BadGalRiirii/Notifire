@@ -72,34 +72,70 @@ the backend and app tests. It should turn green ✔.
 
 ---
 
-## Step 4: Deploy on Render
+## Step 4a: Brevo (emails on Render)
 
-Cost: **Starter web service ≈ $7/month** + **cron job ≈ $1/month**. The free
-tier sleeps when idle, which is unsafe for a fire alarm.
+Render's free plan **blocks the ports Gmail uses**, so on Render the
+verification codes are sent through **Brevo** (free, 300 emails/day). Gmail
+keeps working when the server runs on your PC.
 
-1. Sign up at <https://render.com> with your GitHub account and add a payment
-   method.
+1. Log in to <https://www.brevo.com> with **asianbaddiebee@gmail.com**.
+2. **Senders & IP** → **Senders** → make sure `asianbaddiebee@gmail.com` is
+   listed and **verified** (Brevo emails you a confirmation link).
+3. **SMTP & API** → **API Keys** → **Generate a new API key**, name it
+   `NotiFire`, and copy it (starts with `xkeysib-`). It's shown only once.
+   **Don't paste it in chats.**
+4. To test on your PC, add to `backend/.env`:
+   ```
+   BREVO_API_KEY=xkeysib-...
+   NOTIFIRE_EMAIL_SENDER=asianbaddiebee@gmail.com
+   ```
+
+## Step 4b: Deploy on Render (free plan)
+
+1. Sign up at <https://render.com> with your GitHub account (no card needed
+   for the free plan).
 2. **New** → **Blueprint** → select the `Notifire` repository → **Connect**.
-   Render reads `render.yaml` and shows two services:
-   `notifire-api` (web) and `notifire-offline-check` (cron).
+   Render reads `render.yaml` and shows one service: `notifire-api`.
 3. Fill in the secret values it asks for:
 
    | Key | Value |
    |---|---|
    | `DATABASE_URL` | Your Supabase **Session pooler** connection string, the same one as in `backend/.env` |
-   | `EMAIL_HOST_USER` | The Gmail address from Step 1 |
-   | `EMAIL_HOST_PASSWORD` | The 16-letter App Password (no spaces) |
+   | `BREVO_API_KEY` | The Brevo API key from Step 4a |
+   | `NOTIFIRE_EMAIL_SENDER` | `asianbaddiebee@gmail.com` |
    | `FIREBASE_CREDENTIALS_JSON` | Open the service-account `.json` from Step 2 in Notepad, select all, copy, paste |
    | `SENTRY_DSN` | Leave empty for now (optional, see Step 7) |
 
-4. Click **Apply**. The first deploy takes ~5 minutes (install → migrate →
-   start). When `notifire-api` shows **Live**, copy its address from the top
-   of its page, e.g. `https://notifire-api.onrender.com`.
+4. Click **Apply**. The first deploy takes ~5 minutes. When `notifire-api`
+   shows **Live**, copy its address from the top of its page, e.g.
+   `https://notifire-api.onrender.com`.
 5. Check it: open `https://notifire-api.onrender.com/api/health/` in a
    browser. You should see `{"status":"ok", ...}`.
-6. In `notifire-api` → **Settings** → **Build & Deploy**, confirm
-   **Auto-Deploy** is set to *After CI checks pass*. Every push to `main`
-   then deploys automatically, but only if the tests pass.
+6. In `notifire-api` → **Environment**, find `NOTIFIRE_CRON_SECRET` (Render
+   generated it) and copy its value for Step 4c.
+
+## Step 4c: cron-job.org (keeps Render awake + offline alerts)
+
+Free Render services **sleep after 15 minutes without requests** and take
+about a minute to wake. Your detectors upload every ~5 s, which keeps it
+awake while any detector is online. This scheduler covers the rest, and it
+also runs the "detector went offline" check (Render's cron jobs aren't free).
+
+1. Sign up at <https://cron-job.org> (free).
+2. **Create cronjob**:
+   - **Title:** `NotiFire offline check`
+   - **URL:** `https://notifire-api.onrender.com/api/internal/check-offline/`
+   - **Schedule:** every **5 minutes**
+   - **Advanced** → **Headers** → add `X-Cron-Secret` = the
+     `NOTIFIRE_CRON_SECRET` value from Step 4b.6
+3. Save, then **Test run**. The response should be
+   `{"status":"ok","newly_offline":0}`.
+
+**Free-plan limits:** Render says free services "might restart at any
+time" and are not for production. Uploads and phone alerts can pause briefly
+during a restart, while **the detectors' buzzers keep working**. For a real
+deployment, upgrade `notifire-api` to **Starter** in Render (no code changes
+needed).
 
 ---
 

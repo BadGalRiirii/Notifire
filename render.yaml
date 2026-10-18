@@ -1,34 +1,25 @@
-# Render Blueprint — creates the NotiFire API and its offline-alert cron job.
+# Render Blueprint — NotiFire API on Render's FREE plan.
 # Render dashboard → New → Blueprint → pick this repo. You'll be asked for the
 # secret values marked `sync: false` (see DEPLOYMENT.md).
-
-envVarGroups:
-  - name: notifire-shared
-    envVars:
-      - key: DJANGO_SECRET_KEY
-        generateValue: true
-      - key: DATABASE_URL            # Supabase "Session pooler" connection string
-        sync: false
-      - key: EMAIL_HOST_USER         # your Gmail address
-        sync: false
-      - key: EMAIL_HOST_PASSWORD     # Gmail App Password (16 letters)
-        sync: false
-      - key: FIREBASE_CREDENTIALS_JSON   # whole service-account JSON file
-        sync: false
-      - key: SENTRY_DSN              # optional error tracking; leave blank to skip
-        sync: false
+#
+# Free-plan differences (render.com/docs/free) and how they're handled:
+#   - Sleeps after 15 min without requests → detectors upload every ~5 s, and
+#     cron-job.org calls /api/internal/check-offline/ every 5 min.
+#   - SMTP ports blocked → emails go through Brevo's HTTPS API.
+#   - No cron jobs / pre-deploy step → offline checks via cron-job.org,
+#     migrations run when the server starts.
+#   - May restart at any time → the detectors' buzzers never depend on it.
 
 services:
   - type: web
     name: notifire-api
     runtime: python
     region: singapore             # closest Render region to the PH and to Supabase (Sydney)
-    plan: starter                 # always on — free instances sleep, unsafe for alarms
+    plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    preDeployCommand: python manage.py migrate --noinput
-    # 2 workers × 4 threads = at most 8 DB connections (Supabase pool: 15).
-    startCommand: gunicorn notifire_backend.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 30 --access-logfile -
+    # 1 worker × 4 threads fits the free plan's 512 MB and Supabase's pool.
+    startCommand: python manage.py migrate --noinput && gunicorn notifire_backend.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 30 --access-logfile -
     healthCheckPath: /api/health/
     autoDeployTrigger: checksPass  # deploy only after GitHub CI passes
     envVars:
@@ -40,21 +31,17 @@ services:
         value: "1"
       - key: DB_CONN_MAX_AGE
         value: "60"
-      - fromGroup: notifire-shared
-
-  - type: cron
-    name: notifire-offline-check
-    runtime: python
-    region: singapore
-    plan: starter
-    schedule: "*/5 * * * *"       # every 5 minutes
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: python manage.py check_offline
-    autoDeployTrigger: checksPass
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12"
-      - key: DJANGO_DEBUG
-        value: "0"
-      - fromGroup: notifire-shared
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: NOTIFIRE_CRON_SECRET     # paste into cron-job.org's X-Cron-Secret header
+        generateValue: true
+      - key: DATABASE_URL             # Supabase "Session pooler" connection string
+        sync: false
+      - key: BREVO_API_KEY            # Brevo → SMTP & API → API Keys
+        sync: false
+      - key: NOTIFIRE_EMAIL_SENDER    # the sender address verified in Brevo
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON   # whole service-account JSON file
+        sync: false
+      - key: SENTRY_DSN               # optional error tracking; leave blank to skip
+        sync: false

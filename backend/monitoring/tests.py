@@ -392,6 +392,53 @@ class NotificationTests(ApiTestCase):
         self.assertEqual(self.pushes(), [])
 
 
+class FreeTierTests(ApiTestCase):
+    """Render free tier: email via Brevo's HTTPS API, offline checks via an
+    external scheduler hitting a secret endpoint."""
+
+    def test_codes_are_sent_through_brevo_when_configured(self):
+        from django.test import override_settings
+
+        with override_settings(BREVO_API_KEY="test-key", NOTIFIRE_EMAIL_SENDER="alerts@example.com"), \
+                mock.patch("urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b"{}"
+            self.register(email="brevo@example.com", verify=False)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(request.get_header("Api-key"), "test-key")
+        import json
+        body = json.loads(request.data)
+        self.assertEqual(body["to"], [{"email": "brevo@example.com"}])
+        self.assertEqual(body["sender"]["email"], "alerts@example.com")
+        self.assertRegex(body["textContent"], r"\b\d{6}\b")
+        self.assertEqual(mail.outbox, [])  # SMTP not used
+
+    def test_cron_endpoint_requires_secret(self):
+        from django.test import override_settings
+
+        anon = APIClient()
+        self.assertEqual(anon.get("/api/internal/check-offline/").status_code, 404)  # disabled
+        with override_settings(NOTIFIRE_CRON_SECRET="s3cret"):
+            self.assertEqual(anon.get("/api/internal/check-offline/",
+                                      HTTP_X_CRON_SECRET="wrong").status_code, 404)
+            r = anon.get("/api/internal/check-offline/", HTTP_X_CRON_SECRET="s3cret")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["newly_offline"], 0)
+
+    def test_cron_endpoint_sends_offline_alerts(self):
+        from django.test import override_settings
+
+        self.auth(self.register())
+        self.client.post("/api/push/register/", {"token": "phone"}, format="json")
+        d = self.client.post("/api/detectors/", {"room": "Garage"}, format="json").json()
+        self.ingest(d["code"])
+        Detector.objects.update(last_seen_at=timezone.now() - timedelta(minutes=10))
+        with override_settings(NOTIFIRE_CRON_SECRET="s3cret"):
+            r = APIClient().post("/api/internal/check-offline/", HTTP_X_CRON_SECRET="s3cret")
+        self.assertEqual(r.json()["newly_offline"], 1)
+        self.assertEqual([a.kind for _, a in self.pushes()], ["OFFLINE"])
+
+
 class HealthTests(TestCase):
     def test_health_checks_database(self):
         r = APIClient().get("/api/health/")

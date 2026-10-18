@@ -7,8 +7,11 @@ SECRET_KEY) is stored, so a database leak does not reveal live codes.
 """
 import hashlib
 import hmac
+import json
 import logging
 import secrets
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
@@ -20,6 +23,8 @@ from django.utils.crypto import constant_time_compare
 from .models import EmailCode
 
 logger = logging.getLogger(__name__)
+
+BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 
 CODE_TTL = timedelta(minutes=15)
 RESEND_COOLDOWN = timedelta(seconds=60)
@@ -46,9 +51,39 @@ class CodeError(Exception):
     """User-facing problem with a code (wrong, expired, too soon...)."""
 
 
+def _send_brevo(subject: str, body: str, to: str) -> None:
+    """Send through Brevo's HTTPS API (port 443). Render's free tier blocks
+    the SMTP ports Gmail needs, so production uses this instead."""
+    payload = json.dumps({
+        "sender": {"name": "NotiFire", "email": settings.NOTIFIRE_EMAIL_SENDER},
+        "to": [{"email": to}],
+        "subject": subject,
+        "textContent": body,
+    }).encode()
+    request = urllib.request.Request(
+        BREVO_URL,
+        data=payload,
+        method="POST",
+        headers={
+            "api-key": settings.BREVO_API_KEY,
+            "content-type": "application/json",
+            "accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        # Brevo explains problems (e.g. unverified sender) in the body.
+        raise RuntimeError(f"Brevo HTTP {exc.code}: {exc.read()[:300]!r}") from exc
+
+
 def _deliver(subject: str, body: str, to: str, user_id: int, purpose: str) -> None:
     try:
-        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [to])
+        if settings.BREVO_API_KEY:
+            _send_brevo(subject, body, to)
+        else:
+            send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [to])
         logger.info("Sent %s code to user %s", purpose, user_id)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to send %s code to user %s", purpose, user_id)

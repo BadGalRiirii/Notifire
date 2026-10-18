@@ -1,8 +1,10 @@
 import logging
 
+from django.conf import settings
 from django.db import connection
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
@@ -11,6 +13,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from . import firebase, notifications
 from .models import DetectionLog, Detector, Level
+from .offline import run_offline_check
 from .serializers import (
     DetectionLogSerializer,
     DetectorSerializer,
@@ -52,6 +55,20 @@ def health(request):
         return Response({"status": "error", "database": "unreachable"},
                         status=status.HTTP_503_SERVICE_UNAVAILABLE)
     return Response({"status": "ok", "time": timezone.now().isoformat()})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@throttle_classes([])
+def internal_check_offline(request):
+    """Called every few minutes by an external scheduler (cron-job.org) with
+    header X-Cron-Secret. Sends offline alerts — and, on Render's free tier,
+    the regular request also keeps the server from going to sleep."""
+    secret = settings.NOTIFIRE_CRON_SECRET
+    if not secret or not constant_time_compare(request.headers.get("X-Cron-Secret", ""), secret):
+        return Response(status=status.HTTP_404_NOT_FOUND)  # don't advertise it exists
+    count = run_offline_check()
+    return Response({"status": "ok", "newly_offline": count})
 
 
 # ------------------------------------------------------------- detectors ----

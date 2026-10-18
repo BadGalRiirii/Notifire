@@ -4,6 +4,7 @@ from . import accounts, views
 
 urlpatterns = [
     path("health/", views.health),
+    path("internal/check-offline/", views.internal_check_offline),  # external scheduler
     # accounts
     path("auth/register/", accounts.register),
     path("auth/login/", accounts.login),
