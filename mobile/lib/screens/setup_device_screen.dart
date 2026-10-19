@@ -579,7 +579,7 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
             onPressed: _scanQr,
             icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Scan Wi-Fi QR code (no typing)'),
+            label: const Text('Scan Wi-Fi QR code'),
           ),
           const SizedBox(height: 14),
           if (_scanningWifi && _networks.isEmpty)
