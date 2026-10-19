@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import accounts, views
+from . import accounts, exports, views
 
 urlpatterns = [
     path("health/", views.health),
@@ -23,7 +23,9 @@ urlpatterns = [
     path("detectors/", views.DetectorList.as_view()),
     path("detectors/<int:pk>/", views.DetectorDetail.as_view()),
     path("detectors/<int:pk>/readings/", views.detector_readings),
+    path("detectors/<int:pk>/readings/export/", exports.export_readings),
     path("logs/", views.detection_logs),
+    path("logs/export/", exports.export_logs),
     path("logs/<int:pk>/", views.detection_log_detail),
     # ESP32 → server (authenticated by X-Detector-Code header)
     path("device/check/", views.device_check),

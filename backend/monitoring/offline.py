@@ -18,6 +18,18 @@ from . import notifications
 from .models import Detector
 
 
+def prune_old_readings() -> int:
+    """Delete raw readings older than NOTIFIRE_READING_RETENTION_DAYS so the
+    database stays within Supabase's free 500 MB (a detector stores ~14,000
+    readings a day). Alert history is kept: each alert stores its own copy of
+    the readings at that moment. Returns how many readings were deleted."""
+    from .models import SensorReading
+
+    cutoff = timezone.now() - timedelta(days=settings.NOTIFIRE_READING_RETENTION_DAYS)
+    deleted, _ = SensorReading.objects.filter(created_at__lt=cutoff).delete()
+    return deleted
+
+
 def run_offline_check() -> int:
     """Notify about newly offline detectors. Returns how many."""
     cutoff = timezone.now() - timedelta(minutes=settings.NOTIFIRE_OFFLINE_ALERT_MINUTES)

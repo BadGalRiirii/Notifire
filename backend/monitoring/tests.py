@@ -439,6 +439,63 @@ class FreeTierTests(ApiTestCase):
         self.assertEqual([a.kind for _, a in self.pushes()], ["OFFLINE"])
 
 
+class ExportTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.auth(self.register())
+        self.kitchen = self.client.post("/api/detectors/", {"room": "Kitchen"}, format="json").json()
+
+    def csv_rows(self, response):
+        import csv
+        text = b"".join(response.streaming_content).decode("utf-8-sig")
+        return list(csv.reader(text.splitlines()))
+
+    def test_export_alert_history_csv(self):
+        self.ingest(self.kitchen["code"], gas=2000, temperature=31.5, humidity=70.2)
+        r = self.client.get("/api/logs/export/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("attachment; filename=\"notifire-alerts-", r["Content-Disposition"])
+        rows = self.csv_rows(r)
+        self.assertEqual(rows[0][:6], ["Date", "Time", "Room", "Detector", "Level", "What happened"])
+        self.assertEqual(rows[1][2:5], ["Kitchen", "Kitchen Detector", "DANGER"])
+        self.assertEqual(rows[1][6:], ["2000", "31.5", "70.2"])
+
+    def test_export_only_own_data_and_filters(self):
+        self.ingest(self.kitchen["code"], gas=2000)
+        self.ingest(self.kitchen["code"], gas=400)
+        self.ingest(self.kitchen["code"], gas=1300)
+        self.assertEqual(len(self.csv_rows(self.client.get("/api/logs/export/?level=WARNING"))), 2)
+        self.auth(self.register(email="other@example.com"))
+        self.assertEqual(len(self.csv_rows(self.client.get("/api/logs/export/"))), 1)  # header only
+        self.assertEqual(self.client.get(f"/api/detectors/{self.kitchen['id']}/readings/export/").status_code, 404)
+
+    def test_export_readings_csv(self):
+        for gas in (300, 310, 320):
+            self.ingest(self.kitchen["code"], gas=gas)
+        rows = self.csv_rows(self.client.get(f"/api/detectors/{self.kitchen['id']}/readings/export/?days=7"))
+        self.assertEqual(rows[0][2:4], ["Status", "Smoke/gas level"])
+        self.assertEqual([row[3] for row in rows[1:]], ["320", "310", "300"])
+
+    def test_export_neutralises_spreadsheet_formulas(self):
+        evil = self.client.post("/api/detectors/", {"room": "=HYPERLINK(\"x\")"}, format="json").json()
+        self.ingest(evil["code"], gas=2000)
+        rows = self.csv_rows(self.client.get(f"/api/logs/export/?detector={evil['id']}"))
+        self.assertTrue(rows[1][2].startswith("'="))
+
+    def test_old_readings_are_pruned_but_alerts_kept(self):
+        from .models import DetectionLog, SensorReading
+        from .offline import prune_old_readings
+
+        self.ingest(self.kitchen["code"], gas=2000)
+        SensorReading.objects.update(created_at=timezone.now() - timedelta(days=40))
+        self.ingest(self.kitchen["code"], gas=300)
+        self.assertEqual(prune_old_readings(), 1)
+        self.assertEqual(SensorReading.objects.count(), 1)
+        self.assertEqual(DetectionLog.objects.count(), 1)  # alert history kept
+        self.assertEqual(DetectionLog.objects.get().gas, 2000)
+
+
 class HealthTests(TestCase):
     def test_health_checks_database(self):
         r = APIClient().get("/api/health/")

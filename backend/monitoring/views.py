@@ -13,7 +13,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from . import firebase, notifications
 from .models import DetectionLog, Detector, Level
-from .offline import run_offline_check
+from .offline import prune_old_readings, run_offline_check
 from .serializers import (
     DetectionLogSerializer,
     DetectorSerializer,
@@ -68,7 +68,8 @@ def internal_check_offline(request):
     if not secret or not constant_time_compare(request.headers.get("X-Cron-Secret", ""), secret):
         return Response(status=status.HTTP_404_NOT_FOUND)  # don't advertise it exists
     count = run_offline_check()
-    return Response({"status": "ok", "newly_offline": count})
+    pruned = prune_old_readings()
+    return Response({"status": "ok", "newly_offline": count, "old_readings_deleted": pruned})
 
 
 # ------------------------------------------------------------- detectors ----

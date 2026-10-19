@@ -9,6 +9,7 @@ import '../services/session.dart';
 import '../widgets/detector_sheets.dart';
 import '../widgets/notice.dart';
 import 'detector_screen.dart';
+import 'help_screen.dart';
 import 'setup_device_screen.dart';
 
 /// The panel: every detector the user owns, with its live status.
@@ -409,6 +410,13 @@ class _EmptyState extends StatelessWidget {
             onPressed: onAdd,
             icon: const Icon(Icons.add),
             label: const Text('Add your first detector'),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const HelpScreen())),
+            icon: const Icon(Icons.menu_book_outlined),
+            label: const Text('New here? How to use NotiFire'),
           ),
         ],
       ),

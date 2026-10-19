@@ -24,9 +24,11 @@ ESP32 detectors (MQ-5 + DHT22)  ──HTTP POST + detector code──►  Django
 4. The ESP32 sends readings with its code; the backend files them under the
    right detector and user.
 
-**Going live?** Follow [DEPLOYMENT.md](DEPLOYMENT.md): Render hosting, Gmail
-verification emails, Firebase push notifications, backups and the
-production checklist.
+**Using NotiFire?** See the [User Manual](USER_MANUAL.md), which is also in the app
+under Settings → How to use NotiFire.
+
+**Going live?** Follow [DEPLOYMENT.md](DEPLOYMENT.md): Render hosting, email,
+Firebase push notifications, backups and the production checklist.
 
 ---
 
@@ -111,6 +113,9 @@ App endpoints need `Authorization: Token <token>` (returned by register/login).
 | GET/PATCH/DELETE | `/api/detectors/<id>/`  | One detector; PATCH `{room, name, mq5_enabled}`      |
 | GET    | `/api/detectors/<id>/readings/`   | Recent raw readings (`?limit=50`)                    |
 | GET    | `/api/logs/`                      | WARNING/DANGER history (`?level=DANGER&detector=<id>`) |
+| GET    | `/api/logs/<id>/`                 | One alert with the readings at that moment            |
+| GET    | `/api/logs/export/`               | Alert history as CSV (`?level=&detector=&days=`)      |
+| GET    | `/api/detectors/<id>/readings/export/` | Raw readings as CSV (`?days=`, max 31)           |
 | GET    | `/api/device/check/`              | ESP32, end of Bluetooth setup: confirms server reachable + code valid (`X-Detector-Code`) |
 | POST   | `/api/readings/ingest/`           | ESP32 → `{gas, temperature, humidity}` with header `X-Detector-Code` |
 | GET    | `/api/health/`                    | Health check                                         |

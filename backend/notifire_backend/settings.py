@@ -207,7 +207,8 @@ EMAIL_SEND_ASYNC = not TESTING  # send codes in the background (monitoring/email
 # Brevo (HTTPS email API) — used instead of SMTP when BREVO_API_KEY is set.
 # Required on Render's free tier, which blocks SMTP ports 25/465/587.
 # The sender address must be verified in Brevo (Senders & IP → Senders).
-BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+# Tests never talk to real outside services, whatever is in .env.
+BREVO_API_KEY = "" if TESTING else os.environ.get("BREVO_API_KEY", "")
 NOTIFIRE_EMAIL_SENDER = os.environ.get("NOTIFIRE_EMAIL_SENDER", EMAIL_HOST_USER or "noreply@notifire.local")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", f"NotiFire <{EMAIL_HOST_USER or 'noreply@notifire.local'}>")
 
@@ -255,6 +256,9 @@ NOTIFIRE_TEMP_WARNING = float(os.environ.get("NOTIFIRE_TEMP_WARNING", 35))
 # A detector silent this long gets an "offline" push (monitoring/offline.py).
 NOTIFIRE_OFFLINE_ALERT_MINUTES = int(os.environ.get("NOTIFIRE_OFFLINE_ALERT_MINUTES", 3))
 
+# Raw readings older than this are deleted (alert history is kept forever).
+NOTIFIRE_READING_RETENTION_DAYS = int(os.environ.get("NOTIFIRE_READING_RETENTION_DAYS", 30))
+
 # Shared secret for /api/internal/check-offline/ (sent as X-Cron-Secret by
 # the external scheduler). Unset = endpoint disabled.
 NOTIFIRE_CRON_SECRET = os.environ.get("NOTIFIRE_CRON_SECRET", "")
@@ -264,8 +268,8 @@ NOTIFIRE_CRON_SECRET = os.environ.get("NOTIFIRE_CRON_SECRET", "")
 # Service-account JSON via FIREBASE_CREDENTIALS_JSON (contents) or
 # FIREBASE_CREDENTIALS (file path). See monitoring/firebase.py.
 # ---------------------------------------------------------------------------
-FIREBASE_CREDENTIALS_JSON = os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
-FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
+FIREBASE_CREDENTIALS_JSON = "" if TESTING else os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
+FIREBASE_CREDENTIALS = "" if TESTING else os.environ.get("FIREBASE_CREDENTIALS", "")
 if FIREBASE_CREDENTIALS and not os.path.isabs(FIREBASE_CREDENTIALS):
     FIREBASE_CREDENTIALS = str(BASE_DIR / FIREBASE_CREDENTIALS)  # relative to backend/
 FIREBASE_DATABASE_URL = os.environ.get("FIREBASE_DATABASE_URL", "")

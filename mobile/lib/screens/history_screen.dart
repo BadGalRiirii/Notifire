@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/models.dart';
+import '../widgets/export_sheet.dart';
 import 'alert_detail_screen.dart';
 import '../services/api_service.dart';
 
@@ -95,10 +96,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (single == null)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: Text('Detection History',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('Detection History',
+                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => showExportSheet(context, detectors: _rooms),
+                    icon: const Icon(Icons.ios_share),
+                    label: const Text('Export'),
+                  ),
+                ],
+              ),
             ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -188,8 +200,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (single == null) return body;
     return Scaffold(
       appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          title: Text('${single.room} — History')),
+        backgroundColor: Colors.transparent,
+        title: Text('${single.room} — History'),
+        actions: [
+          IconButton(
+            tooltip: 'Export',
+            icon: const Icon(Icons.ios_share),
+            onPressed: () =>
+                showExportSheet(context, detectors: [single], only: single),
+          ),
+        ],
+      ),
       body: body,
     );
   }

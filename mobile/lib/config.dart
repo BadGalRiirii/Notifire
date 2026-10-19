@@ -1,15 +1,13 @@
 /// App configuration.
 ///
-/// The backend address is set at build time, so the same code works for
-/// local testing and production:
+/// The backend address. Production (Render) by default; to test against a
+/// server running on your PC instead:
 ///
-///   flutter build apk --release --dart-define=API_BASE_URL=https://notifire-api.onrender.com
-///
-/// Without --dart-define it falls back to the PC on the local Wi-Fi.
+///   flutter build apk --release --dart-define=API_BASE_URL=http://192.168.100.89:8000
 class AppConfig {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://192.168.100.89:8000',
+    defaultValue: 'https://notifire-api.onrender.com',
   );
 
   /// How often the dashboard polls the backend for fresh data.

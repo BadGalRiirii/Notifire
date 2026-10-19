@@ -237,6 +237,31 @@ class ApiService {
 
   // ------------------------------------------------------------- history --
 
+  /// Downloads a CSV export. Returns the file contents and its file name.
+  Future<(List<int>, String)> downloadCsv(String path, Map<String, String> query) async {
+    final http.Response resp;
+    try {
+      resp = await http
+          .get(_u(path, query), headers: _headers)
+          .timeout(const Duration(seconds: 90)); // big exports + cold start
+    } on TimeoutException {
+      throw ApiException('The export is taking too long. Try a shorter period.');
+    } on SocketException {
+      throw ApiException('Cannot reach server. Check your internet connection.');
+    } on http.ClientException {
+      throw ApiException('Cannot reach server. Check your internet connection.');
+    }
+    if (resp.statusCode == 401 && Session.instance.isLoggedIn) {
+      await Session.instance.signOut();
+      throw ApiException('Your session has ended. Please log in again.');
+    }
+    if (resp.statusCode >= 400) throw ApiException(_errorMessage(resp));
+    final disposition = resp.headers['content-disposition'] ?? '';
+    final name = RegExp(r'filename="([^"]+)"').firstMatch(disposition)?.group(1) ??
+        'notifire-export.csv';
+    return (resp.bodyBytes.toList(), name);
+  }
+
   /// One alert: what triggered it and the readings at that moment.
   Future<DetectionLog> fetchLog(int id) async {
     final body = await _send(() => http.get(_u('/api/logs/$id/'), headers: _headers));

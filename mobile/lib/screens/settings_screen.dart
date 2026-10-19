@@ -7,6 +7,7 @@ import '../services/api_service.dart';
 import '../services/push_service.dart';
 import '../services/session.dart';
 import '../widgets/form_bits.dart';
+import 'help_screen.dart';
 
 /// Account, notification and app settings (bottom-nav tab).
 class SettingsScreen extends StatefulWidget {
@@ -247,6 +248,14 @@ class _SettingsScreenState extends State<SettingsScreen>
                 Card(
                   child: Column(
                     children: [
+                      ListTile(
+                        leading: const Icon(Icons.menu_book_outlined, color: Color(0xFFFF7043)),
+                        title: const Text('How to use NotiFire'),
+                        subtitle: Text('Setup, alerts, exporting and troubleshooting',
+                            style: TextStyle(color: muted)),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _open(const HelpScreen()),
+                      ),
                       const ListTile(
                         leading: Icon(Icons.local_fire_department, color: Color(0xFFFF7043)),
                         title: Text('NotiFire'),

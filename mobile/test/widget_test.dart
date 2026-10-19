@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:notifire/models/models.dart';
 import 'package:notifire/screens/alert_detail_screen.dart';
 import 'package:notifire/screens/auth_screens.dart';
+import 'package:notifire/screens/help_screen.dart';
+import 'package:notifire/widgets/export_sheet.dart';
 import 'package:notifire/services/push_service.dart';
 import 'package:notifire/services/device_setup.dart';
 import 'package:notifire/widgets/detector_sheets.dart';
@@ -159,6 +161,39 @@ void main() {
     await tester.scrollUntilVisible(find.text('If you see smoke or fire'), 200);
     expect(find.text('If you see smoke or fire'), findsOneWidget);
     await tester.pumpWidget(const SizedBox()); // stop the refresh timer
+  });
+
+  testWidgets('How to use: sections open and include the safety advice',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: HelpScreen()));
+    expect(find.text('1. Getting started'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('4. When you get an alert'), 200);
+    await tester.tap(find.text('4. When you get an alert'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('call 911'), findsOneWidget);
+  });
+
+  testWidgets('Export sheet offers alerts or readings, room and period',
+      (tester) async {
+    final room = Detector.fromJson(_detectorJson());
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => showExportSheet(context, detectors: [room]),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Export history'), findsOneWidget);
+    expect(find.text('All time'), findsOneWidget); // alerts can export all time
+    await tester.tap(find.text('All readings'));
+    await tester.pumpAndSettle();
+    expect(find.text('All time'), findsNothing); // readings are kept 30 days
+    expect(find.text('Last 24 hours'), findsOneWidget);
   });
 
   test('Wi-Fi signal bars from RSSI', () {
