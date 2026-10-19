@@ -17,6 +17,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
+from .access import link_pending_invites
 from .emails import CodeError, check_code, issue_code
 from .models import EmailCode, PushDevice
 from .serializers import (
@@ -95,6 +96,8 @@ def login(request):
     if user is None:
         return Response({"detail": "Incorrect email or password."},
                         status=status.HTTP_400_BAD_REQUEST)
+    if user.profile.email_verified:
+        link_pending_invites(user)
     return _auth_response(user)
 
 
@@ -126,6 +129,7 @@ def verify_email(request):
         return _code_error(exc)
     profile.email_verified = True
     profile.save(update_fields=["email_verified"])
+    link_pending_invites(request.user)  # detectors shared with this email
     return Response(UserSerializer(request.user).data)
 
 
@@ -184,6 +188,7 @@ def reset_password(request):
         # Receiving the code proves they own the inbox.
         user.profile.email_verified = True
         user.profile.save(update_fields=["email_verified"])
+        link_pending_invites(user)
     return _rotate_token(user)
 
 
@@ -258,6 +263,7 @@ def confirm_change_email(request):
     user.save(update_fields=["username", "email"])
     user.profile.email_verified = True
     user.profile.save(update_fields=["email_verified"])
+    link_pending_invites(user)  # invites sent to the new address
     return Response(UserSerializer(user).data)
 
 

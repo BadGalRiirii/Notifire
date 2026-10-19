@@ -70,7 +70,7 @@ class HelpScreen extends StatelessWidget {
               'If the app is open, a red (danger) or yellow (warning) pop-up appears. Tap View details.',
               'If the app is closed, you get a notification. Tap it to see what happened.',
               'Alert details shows what triggered it, the readings at that moment, and how the room is right now.',
-              'Smoke can clear in seconds. When the room is safe again, the alert changes to "back to normal" and still says what happened.',
+              'Smoke can clear in seconds, so a room stays red (or yellow) for 1 minute after the last high reading. After a minute of safe readings, the alert changes to "back to normal" and still says what happened.',
               'Works anywhere: your phone does not need the home Wi-Fi. On another Wi-Fi or mobile data you still see live readings and get alerts. Only the detector needs the home Wi-Fi.',
               'If Settings shows "Alerts may be delayed", tap Allow so battery saving does not hold back alerts while NotiFire is closed.',
             ],
@@ -110,8 +110,18 @@ class HelpScreen extends StatelessWidget {
             ],
           ),
           _Section(
+            icon: Icons.group_outlined,
+            title: '8. Sharing with your household',
+            steps: [
+              'Open the room → ⋮ menu → Share with household, type their email and tap Add person.',
+              'If they already use NotiFire, the detector appears in their app right away. If not, they get an email: they create an account with that same email, and it appears once they verify it.',
+              'They see live readings and History, and get alerts based on their own Settings.',
+              'Only you can rename, delete or reconnect it, switch off the MQ-5, or add and remove people. They can leave with ⋮ → Stop getting this detector.',
+            ],
+          ),
+          _Section(
             icon: Icons.settings_outlined,
-            title: '8. Settings',
+            title: '9. Settings',
             steps: [
               'Change your name, email or password in Settings → Account.',
               'Choose which alerts you get: Danger (recommended on), Warning, and Offline.',
@@ -120,7 +130,7 @@ class HelpScreen extends StatelessWidget {
           ),
           _Section(
             icon: Icons.build_outlined,
-            title: '9. Troubleshooting',
+            title: '10. Troubleshooting',
             children: [
               _Faq(q: 'The app can\'t find my detector',
                   a: 'It only appears while its light is blinking. Hold BOOT for 5 seconds, keep your phone close, '
@@ -139,7 +149,7 @@ class HelpScreen extends StatelessWidget {
           ),
           _Section(
             icon: Icons.health_and_safety_outlined,
-            title: '10. Safety',
+            title: '11. Safety',
             steps: [
               'The detector\'s buzzer is the main alarm — it works even without Wi-Fi or the app.',
               'Phone alerts need Wi-Fi and internet, so treat them as an extra layer.',

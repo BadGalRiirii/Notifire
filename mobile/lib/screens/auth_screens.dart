@@ -23,6 +23,13 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Start waking a sleeping server while the user types.
+    ApiService().wakeServer();
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     _password.dispose();
@@ -130,6 +137,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Start waking a sleeping server while the user types.
+    ApiService().wakeServer();
+  }
+
+  @override
   void dispose() {
     _name.dispose();
     _email.dispose();
@@ -181,7 +195,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _name,
                 textCapitalization: TextCapitalization.words,
                 textInputAction: TextInputAction.next,
-                autofillHints: const [AutofillHints.name],
+                // No autofill: Android's password manager could otherwise save
+                // the name as the login and fill it into Email next time.
+                autofillHints: null,
                 decoration: const InputDecoration(
                     labelText: 'Full name',
                     prefixIcon: Icon(Icons.person_outline)),
@@ -551,7 +567,7 @@ class _EmailField extends StatelessWidget {
       keyboardType: TextInputType.emailAddress,
       textInputAction: TextInputAction.next,
       autocorrect: false,
-      autofillHints: const [AutofillHints.email],
+      autofillHints: const [AutofillHints.email, AutofillHints.username],
       decoration: const InputDecoration(
           labelText: 'Email', prefixIcon: Icon(Icons.email_outlined)),
       validator: validateEmail,

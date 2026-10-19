@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:notifire/models/models.dart';
 import 'package:notifire/screens/alert_detail_screen.dart';
 import 'package:notifire/screens/auth_screens.dart';
+import 'package:notifire/screens/detectors_screen.dart';
 import 'package:notifire/screens/help_screen.dart';
 import 'package:notifire/widgets/export_sheet.dart';
 import 'package:notifire/services/push_service.dart';
@@ -38,6 +39,11 @@ void main() {
       expect(validateEmail(typed), isNull);
     }
     expect(validateEmail('nicolasruilan30'), isNotNull);
+    // Full-width letters from some keyboards, and an autofilled name.
+    final fullWidth = String.fromCharCodes('nicolasruilan30@gmail.com'.runes.map((c) => c + 0xFEE0));
+    expect(cleanEmail(fullWidth), want);
+    expect(validateEmail('riri00'), contains('"riri00" is not an email'));
+    expect(validateEmail('  '), 'Enter your email');
   });
 
   test('SensorReading tolerates DHT22 errors (null temp/humidity)', () {
@@ -52,6 +58,42 @@ void main() {
     expect(r.gas, 400);
     expect(r.temperature, isNull);
     expect(r.humidity, isNull);
+  });
+
+  test('Shared detector: member role, owner name, held alert level', () {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final json = _detectorJson(lastSeen: now, latest: {
+      'gas': 655,
+      'temperature': 30.0,
+      'humidity': 77,
+      'mq5_enabled': true,
+      'level': 'SAFE', // the puff of gas has already cleared…
+      'created_at': now,
+    })
+      ..['code'] = ''
+      ..['role'] = 'member'
+      ..['owner_name'] = 'Maria'
+      ..['status_level'] = 'DANGER'; // …but it was DANGER moments ago
+    final d = Detector.fromJson(json);
+    expect(d.isOwner, isFalse);
+    expect(d.ownerName, 'Maria');
+    expect(d.code, '');
+    expect(d.liveLevel, AlertLevel.danger);
+    expect(detectorBadge(d).$3, 'DANGER');
+
+    // Older servers send neither field: owner, level from the reading.
+    final old = Detector.fromJson(_detectorJson(lastSeen: now, latest: json['latest_reading']));
+    expect(old.isOwner, isTrue);
+    expect(old.liveLevel, AlertLevel.safe);
+  });
+
+  test('Household members: active and pending', () {
+    final active = DetectorMember.fromJson(
+        {'id': 3, 'email': 'juan@example.com', 'name': 'Juan', 'status': 'active'});
+    final pending = DetectorMember.fromJson(
+        {'id': 4, 'email': 'ana@example.com', 'name': '', 'status': 'pending'});
+    expect((active.pending, active.name), (false, 'Juan'));
+    expect((pending.pending, pending.email), (true, 'ana@example.com'));
   });
 
   test('Detector status: not set up, online, offline', () {
@@ -265,7 +307,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
     await tester.tap(find.widgetWithText(FilledButton, 'Log in'));
     await tester.pump();
-    expect(find.text('Enter a valid email'), findsOneWidget);
+    expect(find.text('Enter your email'), findsOneWidget);
     expect(find.text('Enter your password'), findsOneWidget);
 
     await tester.tap(find.text('Create one'));

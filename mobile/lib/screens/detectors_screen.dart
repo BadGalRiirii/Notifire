@@ -168,13 +168,15 @@ class _DetectorCard extends StatelessWidget {
                         style: const TextStyle(
                             fontSize: 16, fontWeight: FontWeight.w600),
                         overflow: TextOverflow.ellipsis),
-                    Text(d.name,
+                    Text(d.isOwner ? d.name : '${d.name} • Shared by ${d.ownerName}',
                         style: TextStyle(fontSize: 12, color: muted),
                         overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 4),
                     Text(
                       d.status == DetectorStatus.notSetUp
-                          ? 'Tap to connect your device'
+                          ? (d.isOwner
+                              ? 'Tap to connect your device'
+                              : 'Waiting for ${d.ownerName} to connect it')
                           : r == null
                               ? 'No readings yet'
                               : [
@@ -222,7 +224,7 @@ class _DetectorCard extends StatelessWidget {
     case DetectorStatus.offline:
       return (Colors.grey, Icons.sensors_off, 'OFFLINE');
     case DetectorStatus.online:
-      return switch (d.latestReading?.level ?? AlertLevel.safe) {
+      return switch (d.liveLevel ?? AlertLevel.safe) {
         AlertLevel.danger => (
             const Color(0xFFE53935),
             Icons.local_fire_department,

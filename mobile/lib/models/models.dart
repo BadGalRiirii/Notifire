@@ -90,10 +90,19 @@ class Detector {
   final int id;
   final String room; // e.g. "Bedroom"
   final String name; // e.g. "Bedroom Detector" (server defaults it from room)
-  final String code; // sent to the ESP32 over Bluetooth during setup
+  final String code; // sent to the ESP32 during setup; empty for members
   final bool mq5Enabled;
   final DateTime? lastSeenAt;
   final SensorReading? latestReading;
+
+  /// Level to show: the latest reading's, held at the most severe level of
+  /// the last minute so a brief puff of gas doesn't flash past.
+  final AlertLevel? statusLevel;
+
+  /// True when this user set it up; false when someone in the household
+  /// shared it with them (they see it and get its alerts, but can't change it).
+  final bool isOwner;
+  final String ownerName;
 
   Detector({
     required this.id,
@@ -103,18 +112,25 @@ class Detector {
     required this.mq5Enabled,
     required this.lastSeenAt,
     required this.latestReading,
+    this.statusLevel,
+    this.isOwner = true,
+    this.ownerName = '',
   });
 
   factory Detector.fromJson(Map<String, dynamic> json) {
     final latest = json['latest_reading'] as Map<String, dynamic>?;
+    final status = json['status_level'] as String?;
     return Detector(
       id: json['id'] as int,
       room: json['room'] as String? ?? '',
       name: json['name'] as String? ?? '',
-      code: json['code'] as String,
+      code: json['code'] as String? ?? '',
       mq5Enabled: json['mq5_enabled'] as bool? ?? true,
       lastSeenAt: _parseDate(json['last_seen_at']),
       latestReading: latest == null ? null : SensorReading.fromJson(latest),
+      statusLevel: status == null ? null : levelFromString(status),
+      isOwner: (json['role'] as String? ?? 'owner') == 'owner',
+      ownerName: json['owner_name'] as String? ?? '',
     );
   }
 
@@ -126,8 +142,27 @@ class Detector {
   }
 
   /// Alert level to show — only trusted while the detector is online.
-  AlertLevel? get liveLevel =>
-      status == DetectorStatus.online ? latestReading?.level : null;
+  AlertLevel? get liveLevel => status == DetectorStatus.online
+      ? (statusLevel ?? latestReading?.level)
+      : null;
+}
+
+/// Someone a detector is shared with, as its owner sees them.
+class DetectorMember {
+  final int id;
+  final String email;
+  final String name;
+  final bool pending; // invited, but hasn't created/verified that account yet
+
+  DetectorMember(
+      {required this.id, required this.email, required this.name, required this.pending});
+
+  factory DetectorMember.fromJson(Map<String, dynamic> json) => DetectorMember(
+        id: json['id'] as int,
+        email: json['email'] as String,
+        name: json['name'] as String? ?? '',
+        pending: json['status'] == 'pending',
+      );
 }
 
 class DetectionLog {

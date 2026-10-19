@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/live_poll.dart';
 import '../widgets/detector_sheets.dart';
+import '../widgets/household_sheet.dart';
 import '../widgets/notice.dart';
 import '../widgets/ppm_gauge.dart';
 import '../widgets/sensor_card.dart';
@@ -97,6 +98,40 @@ class _DetectorScreenState extends State<DetectorScreen>
     }
   }
 
+  Future<void> _leave() async {
+    final d = _detector;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Stop getting the ${d.room} detector?'),
+        content: Text(
+            'You will no longer see its readings or get its alerts. ${d.ownerName} can share it with you again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Stop getting it')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _api.leaveDetector(d.id);
+      if (mounted) Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      _snack(e.message);
+    }
+  }
+
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String title, {Color? color}) =>
+      PopupMenuItem(
+          value: value,
+          child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(icon, color: color),
+              title: Text(title)));
+
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -128,36 +163,25 @@ class _DetectorScreenState extends State<DetectorScreen>
             onSelected: (v) => switch (v) {
               'history' => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => HistoryScreen(detector: d))),
+              'share' => showHouseholdSheet(context, d),
               'connect' => _connectDevice(),
               'edit' => _edit(),
               'delete' => _delete(),
+              'leave' => _leave(),
               _ => null,
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                  value: 'history',
-                  child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.history),
-                      title: Text('History'))),
-              PopupMenuItem(
-                  value: 'connect',
-                  child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.wifi),
-                      title: Text('Connect device / change Wi-Fi'))),
-              PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.edit_outlined),
-                      title: Text('Edit room / name'))),
-              PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.delete_outline, color: Colors.redAccent),
-                      title: Text('Delete detector'))),
+            itemBuilder: (_) => [
+              _menuItem('history', Icons.history, 'History'),
+              _menuItem('share', Icons.group_outlined,
+                  d.isOwner ? 'Share with household' : 'Who gets these alerts'),
+              if (d.isOwner) ...[
+                _menuItem('connect', Icons.wifi, 'Connect device / change Wi-Fi'),
+                _menuItem('edit', Icons.edit_outlined, 'Edit room / name'),
+                _menuItem('delete', Icons.delete_outline, 'Delete detector',
+                    color: Colors.redAccent),
+              ] else
+                _menuItem('leave', Icons.logout, 'Stop getting this detector',
+                    color: Colors.redAccent),
             ],
           ),
         ],
@@ -170,7 +194,7 @@ class _DetectorScreenState extends State<DetectorScreen>
             if (_error != null)
               Notice(icon: Icons.wifi_off, text: _error!),
             if (status == DetectorStatus.notSetUp)
-              _SetupCard(onConnect: _connectDevice)
+              _SetupCard(onConnect: d.isOwner ? _connectDevice : null, ownerName: d.ownerName)
             else ...[
               if (status == DetectorStatus.offline)
                 Notice(
@@ -190,7 +214,7 @@ class _DetectorScreenState extends State<DetectorScreen>
                   ),
                 ),
               if (status == DetectorStatus.online)
-                StatusBanner(level: reading?.level ?? AlertLevel.safe),
+                StatusBanner(level: d.statusLevel ?? reading?.level ?? AlertLevel.safe),
               const SizedBox(height: 16),
               PpmGauge(ppm: mq5On ? reading?.gas : null, enabled: mq5On),
               const SizedBox(height: 16),
@@ -232,9 +256,10 @@ class _DetectorScreenState extends State<DetectorScreen>
                 title: const Text('MQ-5 Smoke Sensor',
                     style: TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: Text(
-                  mq5On
-                      ? 'Active — monitoring smoke & gas levels'
-                      : 'Disabled — gas detection paused',
+                  (mq5On
+                          ? 'Active — monitoring smoke & gas levels'
+                          : 'Disabled — gas detection paused') +
+                      (d.isOwner ? '' : ' (only ${d.ownerName} can change this)'),
                   style: TextStyle(
                       fontSize: 12, color: Colors.white.withValues(alpha: 0.6)),
                 ),
@@ -243,7 +268,8 @@ class _DetectorScreenState extends State<DetectorScreen>
                   color: mq5On ? Colors.greenAccent : Colors.grey,
                 ),
                 value: mq5On,
-                onChanged: _toggleBusy ? null : _toggleMq5,
+                // Muting the gas alarm is the owner's call.
+                onChanged: _toggleBusy || !d.isOwner ? null : _toggleMq5,
               ),
             ),
           ],
@@ -254,8 +280,9 @@ class _DetectorScreenState extends State<DetectorScreen>
 }
 
 class _SetupCard extends StatelessWidget {
-  final VoidCallback onConnect;
-  const _SetupCard({required this.onConnect});
+  final VoidCallback? onConnect; // null: shared with this user, owner connects it
+  final String ownerName;
+  const _SetupCard({required this.onConnect, required this.ownerName});
 
   @override
   Widget build(BuildContext context) {
@@ -272,17 +299,21 @@ class _SetupCard extends StatelessWidget {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
             Text(
-              'Plug in your NotiFire device and connect it to your Wi-Fi from here. Readings appear once it is online.',
+              onConnect == null
+                  ? "$ownerName hasn't connected this detector yet. Readings appear once it is online."
+                  : 'Plug in your NotiFire device and connect it to your Wi-Fi from here. Readings appear once it is online.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 13, color: Colors.white.withValues(alpha: 0.6)),
             ),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: onConnect,
-              icon: const Icon(Icons.bluetooth_searching),
-              label: const Text('Connect device'),
-            ),
+            if (onConnect != null) ...[
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: onConnect,
+                icon: const Icon(Icons.bluetooth_searching),
+                label: const Text('Connect device'),
+              ),
+            ],
           ],
         ),
       ),

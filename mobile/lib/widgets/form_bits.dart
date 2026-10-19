@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -71,13 +73,24 @@ final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 final _emailJunk = RegExp(r"[\s\u00a0\u200b-\u200d\u2060\ufeff]");
 
 /// The email as the server should see it: no spaces or invisible
-/// characters, lowercase, and a keyboard-suggested comma read as a dot
-/// (emails can't contain commas).
-String cleanEmail(String v) =>
-    v.replaceAll(_emailJunk, '').replaceAll(',', '.').toLowerCase();
+/// characters, full-width letters (some keyboards) as normal ones,
+/// lowercase, and a keyboard-suggested comma read as a dot (emails can't
+/// contain commas).
+String cleanEmail(String v) => String.fromCharCodes(v
+        .replaceAll(_emailJunk, '')
+        .runes
+        .map((c) => c >= 0xFF01 && c <= 0xFF5E ? c - 0xFEE0 : (c == 0xFE6B ? 0x40 : c)))
+    .replaceAll(',', '.')
+    .toLowerCase();
 
-String? validateEmail(String? v) =>
-    (v == null || !emailPattern.hasMatch(cleanEmail(v))) ? 'Enter a valid email' : null;
+/// Says what the app actually read, so an autofilled name or a typo is
+/// easy to spot.
+String? validateEmail(String? v) {
+  final email = cleanEmail(v ?? '');
+  if (email.isEmpty) return 'Enter your email';
+  if (emailPattern.hasMatch(email)) return null;
+  return '"$email" is not an email address. Type it like name@gmail.com';
+}
 
 /// Large 6-digit code input.
 class CodeField extends StatelessWidget {
@@ -129,7 +142,9 @@ class ErrorText extends StatelessWidget {
   }
 }
 
-class BusyButton extends StatelessWidget {
+/// Button with a spinner while [busy]. If the wait gets long, explains that
+/// the server is starting up (the free server sleeps when idle).
+class BusyButton extends StatefulWidget {
   final String label;
   final bool busy;
   final VoidCallback? onPressed;
@@ -138,14 +153,62 @@ class BusyButton extends StatelessWidget {
       {super.key, required this.label, required this.busy, required this.onPressed});
 
   @override
+  State<BusyButton> createState() => _BusyButtonState();
+}
+
+class _BusyButtonState extends State<BusyButton> {
+  Timer? _slowTimer;
+  bool _slow = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.busy) _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(BusyButton old) {
+    super.didUpdateWidget(old);
+    if (widget.busy && !old.busy) _startTimer();
+    if (!widget.busy && old.busy) {
+      _slowTimer?.cancel();
+      _slow = false;
+    }
+  }
+
+  void _startTimer() {
+    _slowTimer?.cancel();
+    _slowTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _slow = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _slowTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FilledButton(
+    final button = FilledButton(
       style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-      onPressed: busy ? null : onPressed,
-      child: busy
+      onPressed: widget.busy ? null : widget.onPressed,
+      child: widget.busy
           ? const SizedBox(
               height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2.5))
-          : Text(label, style: const TextStyle(fontSize: 16)),
+          : Text(widget.label, style: const TextStyle(fontSize: 16)),
+    );
+    if (!(widget.busy && _slow)) return button;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        button,
+        const SizedBox(height: 8),
+        Text('NotiFire is starting up. This can take up to a minute, please keep the app open.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.6))),
+      ],
     );
   }
 }

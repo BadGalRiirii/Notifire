@@ -19,9 +19,10 @@ The same guide is in the app: **Settings → How to use NotiFire**.
 6. [History and exporting](#6-history-and-exporting)
 7. [The smoke sensor switch (MQ-5)](#7-the-smoke-sensor-switch-mq-5)
 8. [Moving a detector or changing Wi-Fi](#8-moving-a-detector-or-changing-wi-fi)
-9. [Settings](#9-settings)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Safety](#11-safety)
+9. [Sharing with your household](#9-sharing-with-your-household)
+10. [Settings](#10-settings)
+11. [Troubleshooting](#11-troubleshooting)
+12. [Safety](#12-safety)
 
 ---
 
@@ -108,9 +109,10 @@ Normal humid weather (75–84 %) does **not** cause a warning.
   - **what triggered it** (e.g. *Smoke or gas detected, level 2346*),
   - **the readings at that moment**, with the one over its limit highlighted,
   - **how the room is right now** (e.g. *Back to normal*).
-- Smoke can clear in seconds. When the room is safe again, the notification
-  changes to **"✅ Kitchen is back to normal"** and still says what happened
-  earlier.
+- Smoke can clear in seconds, so a room stays **DANGER** (or **WARNING**) in
+  the app for **1 minute** after the last high reading, so a short puff isn't
+  missed. After a full minute of safe readings, the notification changes to
+  **"✅ Kitchen is back to normal"** and still says what happened earlier.
 - You also get a notice if a detector goes **offline** (loses power or
   Wi-Fi) and when it's **back online**.
 - **Works anywhere.** Your phone does not need to be on the home Wi-Fi. At
@@ -174,7 +176,28 @@ then reset it with **BOOT**. They can then add it to their own account.
 
 ---
 
-## 9. Settings
+## 9. Sharing with your household
+
+Everyone at home can get a detector's alerts on their own phone.
+
+1. Open the room → **⋮** → **Share with household**.
+2. Type their email and tap **Add person**.
+   - **They already use NotiFire:** the detector appears in their app right
+     away.
+   - **They don't yet:** they get an email. Once they install NotiFire,
+     **create an account with that same email** and verify it, and the
+     detector appears automatically.
+3. They see live readings and History, and get Danger, Warning and Offline
+   alerts according to **their own** Settings.
+
+Only you (the owner) can rename, delete or reconnect the detector, switch the
+MQ-5 off, or add and remove people. Tap **✕** next to someone to remove them.
+Someone you added can leave with **⋮** → **Stop getting this detector**.
+Up to 10 people per detector.
+
+---
+
+## 10. Settings
 
 - **Account:** change your name, email (confirmed with a code sent to the
   new address) or password. Changing your password logs out your other phones.
@@ -187,7 +210,7 @@ then reset it with **BOOT**. They can then add it to their own account.
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Problem | What to do |
 |---|---|
@@ -201,7 +224,7 @@ then reset it with **BOOT**. They can then add it to their own account.
 
 ---
 
-## 11. Safety
+## 12. Safety
 
 - **The detector's buzzer is the main alarm.** It works even without Wi-Fi
   or the app.

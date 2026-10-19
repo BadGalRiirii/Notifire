@@ -105,6 +105,33 @@ class Detector(models.Model):
         return f"{self.name} — {self.room} ({self.code})"
 
 
+class DetectorMember(models.Model):
+    """Someone in the household the owner shared a detector with. They see
+    its readings and history and get its alerts; only the owner can change
+    or delete it.
+
+    Added by email. `user` is set straight away when that email already has
+    a verified account, otherwise once someone registers and verifies it
+    (see access.link_pending_invites) — so access only ever goes to whoever
+    proved they own the address."""
+
+    detector = models.ForeignKey(Detector, on_delete=models.CASCADE, related_name="members")
+    email = models.EmailField()  # lowercase
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             null=True, blank=True, related_name="shared_detectors")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["detector", "email"], name="member_detector_email_uniq"),
+        ]
+        indexes = [models.Index(fields=["email"], name="member_email_idx")]
+
+    def __str__(self):
+        return f"{self.email} → {self.detector_id}" + ("" if self.user_id else " (pending)")
+
+
 class SensorReading(models.Model):
     """A single reading pushed by an ESP32 detector."""
 

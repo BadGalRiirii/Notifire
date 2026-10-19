@@ -144,3 +144,21 @@ def check_code(user, purpose: str, code: str) -> EmailCode:
     entry.used = True
     entry.save(update_fields=["attempts", "used"])
     return entry
+
+
+def send_share_notice(to: str, owner_name: str, room: str, has_account: bool, user_id=None) -> None:
+    """Tell someone a detector was shared with them (no code needed)."""
+    if has_account:
+        how = ("Open the NotiFire app and you'll see it in your detectors. You'll get its "
+               "danger, warning and offline alerts, based on your notification settings.")
+    else:
+        how = ("To see it, install the NotiFire app and create an account with this email "
+               f"address ({to}). Once you verify it, the detector appears automatically.")
+    body = (f"Hi,\n\n{owner_name} shared their {room} detector with you on NotiFire, so you'll "
+            f"be alerted if it senses smoke, gas or heat.\n\n{how}\n\n"
+            "If you don't know who this is, you can ignore this email.\n\n— NotiFire")
+    args = (f"{owner_name} shared a NotiFire detector with you", body, to, user_id, "share")
+    if settings.EMAIL_SEND_ASYNC:
+        _mailer.submit(_deliver, *args)
+    else:
+        _deliver(*args)

@@ -20,9 +20,11 @@ Messages are shown to users (app history, push notifications): keep them
 short and plain.
 """
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
 
 from django.conf import settings
+from django.utils import timezone
 
 
 @dataclass
@@ -60,3 +62,22 @@ def classify(gas: Optional[float], temperature: Optional[float], humidity: Optio
     if warning_reasons:
         return Classification("WARNING", warning_reasons)
     return Classification("SAFE", [])
+
+
+# A puff of gas or smoke can clear in seconds, yet it still matters. A room
+# counts as being at its most severe level for this long after that level was
+# last read, so the app doesn't flash DANGER for 2 s and go green, and a
+# falling reading (DANGER → WARNING → SAFE) doesn't overwrite the DANGER alert.
+ALERT_HOLD = timedelta(seconds=60)
+
+SEVERITY = {"SAFE": 0, "WARNING": 1, "DANGER": 2}
+
+
+def held_level(detector) -> str:
+    """The most severe level this detector read within ALERT_HOLD."""
+    recent = (detector.readings
+              .filter(created_at__gte=timezone.now() - ALERT_HOLD)
+              .exclude(level="SAFE")
+              .values_list("level", flat=True)
+              .distinct())
+    return max(recent, key=SEVERITY.__getitem__, default="SAFE")

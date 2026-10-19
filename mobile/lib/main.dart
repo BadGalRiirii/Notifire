@@ -29,7 +29,7 @@ class NotiFireApp extends StatefulWidget {
   State<NotiFireApp> createState() => _NotiFireAppState();
 }
 
-class _NotiFireAppState extends State<NotiFireApp> {
+class _NotiFireAppState extends State<NotiFireApp> with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
   late _Stage _stage = _currentStage();
   StreamSubscription<AlertTarget>? _openSub;
@@ -45,6 +45,7 @@ class _NotiFireAppState extends State<NotiFireApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Session.instance.addListener(_onSessionChanged);
     _openSub = PushService.instance.openTarget.listen(_open);
     _liveSub = PushService.instance.liveAlerts.listen(_showPopup);
@@ -53,10 +54,21 @@ class _NotiFireAppState extends State<NotiFireApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     Session.instance.removeListener(_onSessionChanged);
     _openSub?.cancel();
     _liveSub?.cancel();
     super.dispose();
+  }
+
+  // Re-register this phone for alerts every time the app comes back, so an
+  // earlier failed registration (offline, server waking up) or an account
+  // switch can't leave alerts going to the wrong account.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _stage == _Stage.home) {
+      PushService.instance.syncToken(askPermission: false);
+    }
   }
 
   /// Only a real change of stage (log in/out, email verified) resets the

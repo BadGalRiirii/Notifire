@@ -11,7 +11,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import notifications
-from .models import Detector, EmailCode, PushDevice
+from .models import DetectionLog, Detector, DetectorMember, EmailCode, PushDevice, SensorReading
+from .services import ALERT_HOLD
 
 PASSWORD = "s3cure-pass-42"
 
@@ -316,9 +317,15 @@ class NotificationTests(ApiTestCase):
         self.assertEqual(alert.channel, notifications.CHANNEL_ALARMS)
         self.assertEqual(alert.detector_id, self.kitchen["id"])
 
+    def age_readings(self, by=ALERT_HOLD + timedelta(seconds=1)):
+        """Pretend the readings so far happened `by` ago."""
+        for r in SensorReading.objects.all():
+            SensorReading.objects.filter(pk=r.pk).update(created_at=r.created_at - by)
+
     def test_back_to_normal_replaces_alert_once(self):
         self.ingest(self.kitchen["code"], gas=2000)   # DANGER → push
-        self.ingest(self.kitchen["code"], gas=400)    # SAFE → "back to normal"
+        self.age_readings()
+        self.ingest(self.kitchen["code"], gas=400)    # SAFE for a whole hold → "back to normal"
         self.ingest(self.kitchen["code"], gas=400)    # still SAFE → nothing more
         alerts = [alert for _, alert in self.pushes()]
         self.assertEqual([a.kind for a in alerts], ["DANGER", "SAFE"])
@@ -327,6 +334,34 @@ class NotificationTests(ApiTestCase):
         # The "back to normal" message still says what happened, and links to it.
         self.assertIn("Earlier: Smoke or gas detected", alerts[1].body)
         self.assertEqual(alerts[1].log_id, alerts[0].log_id)
+
+    def test_brief_gas_puff_stays_danger_for_a_minute(self):
+        # A lighter puff: one DANGER reading, then falling fast.
+        for gas in (1909, 1287, 655, 400):
+            self.ingest(self.kitchen["code"], gas=gas)
+        # Only the DANGER push: the falling WARNING must not replace it, and
+        # it's too soon for "back to normal".
+        self.assertEqual([a.kind for _, a in self.pushes()], ["DANGER"])
+        d = self.client.get(f"/api/detectors/{self.kitchen['id']}/").json()
+        self.assertEqual(d["latest_reading"]["level"], "SAFE")
+        self.assertEqual(d["status_level"], "DANGER")   # what the app shows
+        # Both alerts are still in History.
+        levels = [log["level"] for log in self.client.get("/api/logs/").json()]
+        self.assertCountEqual(levels, ["DANGER", "WARNING"])
+
+    def test_status_level_returns_to_safe_after_the_hold(self):
+        self.ingest(self.kitchen["code"], gas=1909)
+        self.age_readings()
+        self.ingest(self.kitchen["code"], gas=400)
+        d = self.client.get(f"/api/detectors/{self.kitchen['id']}/").json()
+        self.assertEqual(d["status_level"], "SAFE")
+        self.assertEqual([a.kind for _, a in self.pushes()], ["DANGER", "SAFE"])
+
+    def test_rising_warning_to_danger_still_pushes_danger(self):
+        self.client.patch("/api/auth/me/", {"notify_warning": True}, format="json")
+        self.ingest(self.kitchen["code"], gas=1300)
+        self.ingest(self.kitchen["code"], gas=2000)
+        self.assertEqual([a.kind for _, a in self.pushes()], ["WARNING", "DANGER"])
 
     def test_alert_links_to_its_history_entry(self):
         self.ingest(self.kitchen["code"], gas=2000, temperature=31.5)
@@ -359,6 +394,7 @@ class NotificationTests(ApiTestCase):
         self.assertEqual(self.pushes(), [])
         self.client.patch("/api/auth/me/", {"notify_warning": True}, format="json")
         self.ingest(self.kitchen["code"], gas=1600)  # DANGER resets the log
+        self.age_readings()                          # …and its hold has passed
         self.ingest(self.kitchen["code"], gas=1300)  # WARNING again → push now
         kinds = [alert.kind for _, alert in self.pushes()]
         self.assertEqual(kinds, ["DANGER", "WARNING"])
@@ -437,6 +473,158 @@ class FreeTierTests(ApiTestCase):
             r = APIClient().post("/api/internal/check-offline/", HTTP_X_CRON_SECRET="s3cret")
         self.assertEqual(r.json()["newly_offline"], 1)
         self.assertEqual([a.kind for _, a in self.pushes()], ["OFFLINE"])
+
+
+class SharingTests(ApiTestCase):
+    """One household: the owner shares a detector with family members."""
+
+    def setUp(self):
+        super().setUp()
+        self.owner_token = self.register(email="maria@example.com", name="Maria")
+        self.auth(self.owner_token)
+        self.client.post("/api/push/register/", {"token": "maria-phone"}, format="json")
+        self.kitchen = self.client.post("/api/detectors/", {"room": "Kitchen"}, format="json").json()
+        self.base = f"/api/detectors/{self.kitchen['id']}"
+        self.juan_token = self.register(email="juan@example.com", name="Juan")
+        self.auth(self.juan_token)
+        self.client.post("/api/push/register/", {"token": "juan-phone"}, format="json")
+        self.auth(self.owner_token)
+
+    def share(self, email, token=None):
+        self.auth(token or self.owner_token)
+        return self.client.post(f"{self.base}/members/", {"email": email}, format="json")
+
+    def test_member_sees_detector_but_not_its_code(self):
+        r = self.share("  Juan@Example.com ")
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual((r.json()["status"], r.json()["name"]), ("active", "Juan"))
+        self.assertIn("Maria shared", mail.outbox[-1].subject)
+        self.auth(self.juan_token)
+        (d,) = self.client.get("/api/detectors/").json()
+        self.assertEqual((d["room"], d["role"], d["owner_name"], d["code"]),
+                         ("Kitchen", "member", "Maria", ""))
+        self.auth(self.owner_token)
+        (d,) = self.client.get("/api/detectors/").json()
+        self.assertEqual((d["role"], d["code"]), ("owner", self.kitchen["code"]))
+
+    def test_member_can_view_everything_but_change_nothing(self):
+        self.share("juan@example.com")
+        self.ingest(self.kitchen["code"], gas=2000)
+        log_id = DetectionLog.objects.get().id
+        self.auth(self.juan_token)
+        for url in (f"{self.base}/", f"{self.base}/readings/", f"{self.base}/members/",
+                    "/api/logs/", f"/api/logs/{log_id}/", "/api/logs/export/",
+                    f"{self.base}/readings/export/"):
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+        self.assertEqual(len(self.client.get("/api/logs/").json()), 1)
+        r = self.client.patch(f"{self.base}/", {"mq5_enabled": False}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self.client.delete(f"{self.base}/").status_code, 403)
+        self.assertEqual(self.share("ana@example.com", self.juan_token).status_code, 403)
+        self.assertTrue(Detector.objects.get().mq5_enabled)
+
+    def test_alerts_reach_every_member(self):
+        self.share("juan@example.com")
+        self.ingest(self.kitchen["code"], gas=2000)
+        (tokens, alert), = self.pushes()
+        self.assertCountEqual(tokens, ["maria-phone", "juan-phone"])
+        self.assertEqual(alert.kind, "DANGER")
+
+    def test_each_member_keeps_their_own_settings(self):
+        self.share("juan@example.com")
+        self.auth(self.juan_token)
+        self.client.patch("/api/auth/me/", {"notify_danger": False}, format="json")
+        self.ingest(self.kitchen["code"], gas=2000)
+        (tokens, _), = self.pushes()
+        self.assertEqual(tokens, ["maria-phone"])
+
+    def test_back_to_normal_and_offline_reach_members(self):
+        self.share("juan@example.com")
+        self.ingest(self.kitchen["code"], gas=2000)
+        for r in SensorReading.objects.all():
+            SensorReading.objects.filter(pk=r.pk).update(
+                created_at=r.created_at - ALERT_HOLD - timedelta(seconds=1))
+        self.ingest(self.kitchen["code"], gas=400)
+        Detector.objects.update(last_seen_at=timezone.now() - timedelta(minutes=10))
+        call_command("check_offline", stdout=StringIO())
+        both = ["juan-phone", "maria-phone"]
+        sent = [(a.kind, sorted(t)) for t, a in self.pushes()]
+        self.assertEqual(sent, [("DANGER", both), ("SAFE", both), ("OFFLINE", both)])
+
+    def test_invite_waits_until_that_email_is_verified(self):
+        r = self.share("ana@example.com")
+        self.assertEqual(r.json()["status"], "pending")
+        self.assertIn("create an account with this email", mail.outbox[-1].body)
+        ana = self.register(email="ana@example.com", name="Ana", verify=False)
+        self.auth(ana)
+        # Not verified yet: no access.
+        self.assertEqual(self.client.get(f"{self.base}/").status_code, 403)
+        self.client.post("/api/auth/verify-email/", {"code": last_code()}, format="json")
+        (d,) = self.client.get("/api/detectors/").json()
+        self.assertEqual(d["role"], "member")
+        self.auth(self.owner_token)
+        (m,) = self.client.get(f"{self.base}/members/").json()
+        self.assertEqual((m["status"], m["name"]), ("active", "Ana"))
+
+    def test_unverified_account_is_not_given_access_by_email_alone(self):
+        self.register(email="ana@example.com", name="Ana", verify=False)
+        self.assertEqual(self.share("ana@example.com").json()["status"], "pending")
+        self.assertIsNone(DetectorMember.objects.get().user)
+
+    def test_member_can_leave_and_owner_can_remove(self):
+        self.share("juan@example.com")
+        self.auth(self.juan_token)
+        self.assertEqual(self.client.delete(f"{self.base}/members/me/").status_code, 204)
+        self.assertEqual(self.client.get("/api/detectors/").json(), [])
+        self.assertEqual(self.client.get(f"{self.base}/").status_code, 404)
+
+        member = self.share("juan@example.com").json()
+        r = self.client.delete(f"{self.base}/members/{member['id']}/")
+        self.assertEqual(r.status_code, 204)
+        self.auth(self.juan_token)
+        self.assertEqual(self.client.get("/api/detectors/").json(), [])
+
+    def test_member_cannot_remove_others(self):
+        self.share("juan@example.com")
+        ana = self.share("ana@example.com").json()
+        self.auth(self.juan_token)
+        r = self.client.delete(f"{self.base}/members/{ana['id']}/")
+        self.assertEqual(r.status_code, 403)
+
+    def test_share_rules(self):
+        self.assertEqual(self.share("maria@example.com").status_code, 400)  # yourself
+        self.assertEqual(self.share("juan@example.com").status_code, 201)
+        self.assertEqual(self.share("JUAN@example.com").status_code, 400)   # already has access
+        self.assertEqual(self.share("not-an-email").status_code, 400)
+        for i in range(9):
+            self.assertEqual(self.share(f"p{i}@example.com").status_code, 201)
+        self.assertIn("up to 10", self.share("p10@example.com").json()["email"][0])
+
+    def test_strangers_see_nothing(self):
+        self.share("juan@example.com")
+        stranger = self.register(email="stranger@example.com")
+        self.auth(stranger)
+        self.assertEqual(self.client.get("/api/detectors/").json(), [])
+        for url in (f"{self.base}/", f"{self.base}/members/", f"{self.base}/readings/"):
+            self.assertEqual(self.client.get(url).status_code, 404, url)
+        self.assertEqual(self.share("x@example.com", stranger).status_code, 404)
+
+    def test_deleting_member_account_or_detector_cleans_up(self):
+        self.share("juan@example.com")
+        self.auth(self.juan_token)
+        self.client.delete("/api/auth/me/", {"password": PASSWORD}, format="json")
+        self.assertEqual(DetectorMember.objects.count(), 0)
+        self.assertTrue(Detector.objects.exists())  # the owner's detector is untouched
+        self.share("ana@example.com")
+        self.client.delete(f"{self.base}/")
+        self.assertEqual(DetectorMember.objects.count(), 0)
+
+    def test_detector_listed_once_with_several_members(self):
+        self.share("juan@example.com")
+        self.share("ana@example.com")
+        self.register(email="ana@example.com", name="Ana")  # links Ana on verify
+        self.auth(self.owner_token)
+        self.assertEqual(len(self.client.get("/api/detectors/").json()), 1)
 
 
 class ExportTests(ApiTestCase):

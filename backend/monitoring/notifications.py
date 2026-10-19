@@ -1,5 +1,7 @@
 """
-Push notifications to the owner's phones via Firebase Cloud Messaging.
+Push notifications via Firebase Cloud Messaging, to the phones of everyone
+with access to the detector: its owner and the household members it was
+shared with (each person's own notification settings apply).
 
 Who gets what is decided synchronously (cheap DB reads); the network send to
 Google happens on a small background thread pool so an ESP32's upload is never
@@ -12,7 +14,7 @@ from dataclasses import dataclass
 from django.db import close_old_connections
 from django.utils import timezone
 
-from . import firebase
+from . import access, firebase
 from .models import DetectionLog, Detector, Level, PushDevice
 
 logger = logging.getLogger(__name__)
@@ -91,10 +93,12 @@ def deliver(tokens: list[str], alert: Alert) -> None:
 _pending = set()
 
 
-def _send(user, alert: Alert, wanted: bool) -> bool:
-    if not wanted:
-        return False
-    tokens = list(PushDevice.objects.filter(user=user).values_list("token", flat=True))
+def _send(detector: Detector, alert: Alert, setting: str | None) -> bool:
+    """Queue `alert` for everyone with access to `detector` whose profile
+    has `setting` on (None: everyone). True if any phone was targeted."""
+    users = [u for u in access.recipients(detector)
+             if setting is None or getattr(u.profile, setting)]
+    tokens = list(PushDevice.objects.filter(user__in=users).values_list("token", flat=True))
     if not tokens:
         return False
     future = _executor.submit(deliver, tokens, alert)
@@ -117,15 +121,14 @@ def _clock(dt) -> str:
 
 def notify_detection(detector: Detector, log: DetectionLog) -> bool:
     """A new WARNING/DANGER log was recorded for this detector."""
-    profile = detector.owner.profile
     if log.level == Level.DANGER:
         alert = Alert(f"🔥 DANGER — {detector.room}",
                       f"{log.message}. Check the {detector.room.lower()} now!",
                       CHANNEL_ALARMS, detector.id, "DANGER", log.id)
-        return _send(detector.owner, alert, profile.notify_danger)
+        return _send(detector, alert, "notify_danger")
     alert = Alert(f"⚠️ Warning — {detector.room}", log.message,
                   CHANNEL_ALERTS, detector.id, "WARNING", log.id)
-    return _send(detector.owner, alert, profile.notify_warning)
+    return _send(detector, alert, "notify_warning")
 
 
 def notify_back_to_normal(detector: Detector) -> bool:
@@ -138,18 +141,20 @@ def notify_back_to_normal(detector: Detector) -> bool:
         body = "All readings are safe now."
     alert = Alert(f"✅ {detector.room} is back to normal", body,
                   CHANNEL_ALERTS, detector.id, "SAFE", last.id if last else None)
-    return _send(detector.owner, alert, True)  # only sent after an alert was
+    # Only to those who got the alert it replaces (same setting).
+    setting = {"DANGER": "notify_danger", "WARNING": "notify_warning"}.get(detector.alert_level)
+    return _send(detector, alert, setting)
 
 
 def notify_offline(detector: Detector) -> bool:
     alert = Alert(f"📴 {detector.room} detector is offline",
                   f"{detector.name} stopped sending readings. Check its power and Wi-Fi.",
                   CHANNEL_ALERTS, detector.id, "OFFLINE")
-    return _send(detector.owner, alert, detector.owner.profile.notify_offline)
+    return _send(detector, alert, "notify_offline")
 
 
 def notify_back_online(detector: Detector) -> bool:
     alert = Alert(f"✅ {detector.room} detector is back online",
                   f"{detector.name} is sending readings again.",
                   CHANNEL_ALERTS, detector.id, "ONLINE")
-    return _send(detector.owner, alert, detector.owner.profile.notify_offline)
+    return _send(detector, alert, "notify_offline")

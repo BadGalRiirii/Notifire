@@ -2,7 +2,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import DetectionLog, Detector, SensorReading
+from .models import DetectionLog, Detector, DetectorMember, SensorReading
+from .services import held_level
 
 User = get_user_model()
 
@@ -134,12 +135,19 @@ class SensorReadingSerializer(serializers.ModelSerializer):
 
 class DetectorSerializer(serializers.ModelSerializer):
     latest_reading = serializers.SerializerMethodField()
+    # What the app shows: the latest reading's level, held at the most
+    # severe level of the last minute (see services.ALERT_HOLD).
+    status_level = serializers.SerializerMethodField()
+    # "owner" or "member" (shared with this user by someone in the household).
+    role = serializers.SerializerMethodField()
+    owner_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Detector
         fields = ["id", "room", "name", "code", "mq5_enabled", "last_seen_at", "created_at",
-                  "latest_reading"]
-        read_only_fields = ["id", "code", "last_seen_at", "created_at", "latest_reading"]
+                  "latest_reading", "status_level", "role", "owner_name"]
+        read_only_fields = ["id", "code", "last_seen_at", "created_at", "latest_reading",
+                            "status_level", "role", "owner_name"]
         # Blank name → "<room> Detector" (see Detector.save).
         extra_kwargs = {"name": {"required": False, "allow_blank": True}}
 
@@ -147,6 +155,27 @@ class DetectorSerializer(serializers.ModelSerializer):
         if not value.strip():
             raise serializers.ValidationError("Enter the room this detector is in.")
         return value
+
+    def _viewer(self):
+        request = self.context.get("request")
+        return getattr(request, "user", None)
+
+    def get_role(self, obj):
+        viewer = self._viewer()
+        return "owner" if viewer is None or obj.owner_id == viewer.pk else "member"
+
+    def get_owner_name(self, obj):
+        return obj.owner.first_name or obj.owner.email
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        if data["role"] != "owner":
+            # The code lets a device report as this detector: owner only.
+            data["code"] = ""
+        return data
+
+    def get_status_level(self, obj):
+        return held_level(obj)
 
     def get_latest_reading(self, obj):
         reading = obj.readings.first()
@@ -169,3 +198,28 @@ class DetectionLogSerializer(serializers.ModelSerializer):
         model = DetectionLog
         fields = ["id", "detector", "detector_name", "room", "level", "message", "gas",
                   "temperature", "humidity", "created_at"]
+
+
+class DetectorMemberSerializer(serializers.ModelSerializer):
+    """A household member as the owner sees them."""
+
+    name = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()  # "active" | "pending"
+
+    class Meta:
+        model = DetectorMember
+        fields = ["id", "email", "name", "status", "created_at"]
+        read_only_fields = fields
+
+    def get_name(self, obj):
+        return obj.user.first_name if obj.user_id else ""
+
+    def get_status(self, obj):
+        return "active" if obj.user_id else "pending"
+
+
+class AddMemberSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.strip().lower()

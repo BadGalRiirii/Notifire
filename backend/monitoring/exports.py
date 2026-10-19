@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view
 
+from .access import accessible_detectors
 from .models import DetectionLog, Detector, Level
 
 MAX_READING_DAYS = 31
@@ -69,7 +70,7 @@ def _stamp():
 @api_view(["GET"])
 def export_logs(request):
     """Alert history (WARNING/DANGER) for the user's detectors."""
-    qs = (DetectionLog.objects.filter(detector__owner=request.user)
+    qs = (DetectionLog.objects.filter(detector__in=accessible_detectors(request.user))
           .select_related("detector").order_by("-created_at"))
     level = request.query_params.get("level")
     if level in (Level.WARNING, Level.DANGER):
@@ -96,7 +97,7 @@ def export_logs(request):
 @api_view(["GET"])
 def export_readings(request, pk):
     """Every reading one detector sent, for the last N days (max 31)."""
-    detector = get_object_or_404(Detector, pk=pk, owner=request.user)
+    detector = get_object_or_404(accessible_detectors(request.user), pk=pk)
     days = _days(request, default=7, maximum=MAX_READING_DAYS) or MAX_READING_DAYS
     qs = (detector.readings.filter(created_at__gte=timezone.now() - timedelta(days=days))
           .order_by("-created_at"))
