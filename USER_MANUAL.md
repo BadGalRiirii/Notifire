@@ -72,6 +72,12 @@ we'll email you a code to set a new one.
    one.
 5. Choose your **home Wi-Fi** and type its password. Only 2.4 GHz networks
    are listed, which is normal.
+   - **No typing:** tap **Scan Wi-Fi QR code** and point the camera at the
+     Wi-Fi QR code on your router sticker, or on another phone (*Settings →
+     Wi-Fi → tap your network → Share / QR code*).
+   - The password is **remembered on your phone** (encrypted), so the next
+     detector on the same Wi-Fi fills it in for you. NotiFire's server never
+     receives your Wi-Fi password.
 6. Wait for **"connected"**. The room now shows live readings.
 
 Setting up several rooms? Tap **Add another detector** after each one.

@@ -237,6 +237,12 @@ class ApiService {
 
   // ------------------------------------------------------------- history --
 
+  /// Fire-and-forget request so a sleeping free server starts waking up
+  /// (takes up to a minute) before a detector needs it.
+  void wakeServer() {
+    http.get(_u('/api/health/')).timeout(const Duration(seconds: 90)).ignore();
+  }
+
   /// Downloads a CSV export. Returns the file contents and its file name.
   Future<(List<int>, String)> downloadCsv(String path, Map<String, String> query) async {
     final http.Response resp;

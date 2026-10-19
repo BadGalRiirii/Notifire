@@ -246,7 +246,7 @@ class DeviceSetupService {
         'server': server,
       });
       await for (final status
-          in statuses.stream.timeout(const Duration(seconds: 45))) {
+          in statuses.stream.timeout(const Duration(seconds: 75))) {
         yield status;
         if (status.isFinal) break;
       }

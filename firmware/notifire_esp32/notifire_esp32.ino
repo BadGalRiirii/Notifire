@@ -48,7 +48,7 @@
 #include "DHT.h"
 #include "root_ca.h"
 
-#define FW_VERSION "2.2"
+#define FW_VERSION "2.3"
 
 const char* INGEST_PATH = "/api/readings/ingest/";
 const char* CHECK_PATH  = "/api/device/check/";
@@ -247,38 +247,85 @@ void startBluetoothSetup() {
   BLEDevice::startAdvertising();
 }
 
-void scanWifiNetworks() {
-  if (provState != PROV_IDLE) return;
-  Serial.println("Bluetooth: scanning Wi-Fi networks for the app...");
-  WiFi.disconnect();
-  int found = WiFi.scanNetworks();
-  int sent = 0;
-  for (int i = 0; i < found && sent < 20; i++) {
+// Wi-Fi list cache: the detector scans in the background while in setup mode,
+// so when the app asks, the list is sent immediately instead of after a
+// 2–4 s blocking scan.
+struct CachedNetwork { String ssid; int rssi; bool secure; };
+const int MAX_NETWORKS = 20;
+const unsigned long SCAN_CACHE_MAX_AGE = 30000;
+CachedNetwork cachedNetworks[MAX_NETWORKS];
+int cachedCount = 0;
+unsigned long cachedAt = 0;
+bool backgroundScanRunning = false;
+
+// Copies finished scan results into the cache (deduplicated, strongest first
+// as reported by the radio).
+void storeScanResults(int found) {
+  cachedCount = 0;
+  for (int i = 0; i < found && cachedCount < MAX_NETWORKS; i++) {
     String ssid = WiFi.SSID(i);
     if (ssid.length() == 0) continue;  // hidden network
     bool duplicate = false;
-    for (int j = 0; j < i; j++) {
-      if (WiFi.SSID(j) == ssid) { duplicate = true; break; }
+    for (int j = 0; j < cachedCount; j++) {
+      if (cachedNetworks[j].ssid == ssid) { duplicate = true; break; }
     }
     if (duplicate) continue;
-
-    JsonDocument doc;
-    doc["type"] = "network";
-    doc["ssid"] = ssid;
-    doc["rssi"] = WiFi.RSSI(i);
-    doc["secure"] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
-    sendEvent(doc);
-    sent++;
+    cachedNetworks[cachedCount++] = {ssid, WiFi.RSSI(i), WiFi.encryptionType(i) != WIFI_AUTH_OPEN};
   }
   WiFi.scanDelete();
+  cachedAt = millis();
+}
 
+// Called every loop() in setup mode: keeps the cache fresh in the background.
+void backgroundWifiScanTick() {
+  if (provState != PROV_IDLE) return;
+  if (backgroundScanRunning) {
+    int found = WiFi.scanComplete();
+    if (found >= 0) {
+      storeScanResults(found);
+      backgroundScanRunning = false;
+    } else if (found == WIFI_SCAN_FAILED) {
+      backgroundScanRunning = false;
+    }
+  } else if (cachedAt == 0 || millis() - cachedAt > SCAN_CACHE_MAX_AGE) {
+    backgroundScanRunning = WiFi.scanNetworks(true) == WIFI_SCAN_RUNNING;  // async
+  }
+}
+
+void scanWifiNetworks() {
+  if (provState != PROV_IDLE) return;
+  bool fresh = cachedAt != 0 && millis() - cachedAt <= SCAN_CACHE_MAX_AGE;
+  if (!fresh) {
+    Serial.println("Bluetooth: scanning Wi-Fi networks for the app...");
+    if (backgroundScanRunning) {
+      // Let the scan already in progress finish rather than start another.
+      unsigned long start = millis();
+      while (WiFi.scanComplete() == WIFI_SCAN_RUNNING && millis() - start < 8000) delay(50);
+      int found = WiFi.scanComplete();
+      backgroundScanRunning = false;
+      if (found >= 0) storeScanResults(found);
+    }
+    if (cachedAt == 0 || millis() - cachedAt > SCAN_CACHE_MAX_AGE) {
+      WiFi.disconnect();
+      storeScanResults(WiFi.scanNetworks());
+    }
+  }
+
+  for (int i = 0; i < cachedCount; i++) {
+    JsonDocument doc;
+    doc["type"] = "network";
+    doc["ssid"] = cachedNetworks[i].ssid;
+    doc["rssi"] = cachedNetworks[i].rssi;
+    doc["secure"] = cachedNetworks[i].secure;
+    sendEvent(doc);
+  }
   JsonDocument done;
   done["type"] = "scan_done";
-  done["count"] = sent;
+  done["count"] = cachedCount;
   sendEvent(done);
   Serial.print("Bluetooth: sent ");
-  Serial.print(sent);
-  Serial.println(" Wi-Fi networks");
+  Serial.print(cachedCount);
+  Serial.println(fresh ? " Wi-Fi networks (from background scan)" : " Wi-Fi networks");
 }
 
 void startProvisioning(JsonDocument& doc) {
@@ -377,7 +424,9 @@ void provisioningTick() {
     sendStatus("checking_server");
     int code = -1;
     String body;
-    if (beginRequest(provServer + CHECK_PATH, 10000)) {  // first TLS handshake is slow
+    // Generous: first TLS handshake is slow, and a free Render server that
+    // was asleep holds the request while it wakes up.
+    if (beginRequest(provServer + CHECK_PATH, 30000)) {
       http.addHeader("X-Detector-Code", provCode);
       code = http.GET();
       body = code > 0 ? http.getString() : "";
@@ -559,6 +608,7 @@ void loop() {
       handleCommand(command);
     }
     provisioningTick();
+    backgroundWifiScanTick();
     blinkSetupLed();
   } else {
     reportWifiChanges();

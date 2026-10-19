@@ -32,7 +32,9 @@ class HelpScreen extends StatelessWidget {
               'Light not blinking? Hold the BOOT button on the detector for 5 seconds until it restarts and blinks.',
               'In the app, tap Add detector, choose the room (for example Bedroom) and, if you like, give it a name.',
               'Tap Next. The app finds the detector over Bluetooth — tap it. It beeps 3 times so you know it is the right one.',
-              'Choose your home Wi-Fi and type its password. Only 2.4 GHz networks are shown — that is normal.',
+              'Choose your home Wi-Fi and type its password — or tap Scan Wi-Fi QR code and point the camera at '
+                  'the QR on your router or another phone (Settings → Wi-Fi → Share). Only 2.4 GHz networks work.',
+              'The password is remembered on your phone, so the next detector on the same Wi-Fi needs no typing.',
               'Wait for "connected". The room then shows live readings.',
               'Setting up several? Tap Add another detector after each one.',
             ],

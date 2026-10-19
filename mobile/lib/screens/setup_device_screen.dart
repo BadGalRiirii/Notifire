@@ -5,7 +5,10 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../config.dart';
 import '../models/models.dart';
+import '../services/api_service.dart';
 import '../services/device_setup.dart';
+import '../services/wifi_credentials.dart';
+import 'qr_scan_screen.dart';
 
 enum _Step { preparing, searching, connecting, choosingWifi, sending, success, failed }
 
@@ -48,6 +51,12 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
   @override
   void initState() {
     super.initState();
+    // A free server may be asleep; start waking it now so the detector's
+    // final "checking server" step doesn't wait up to a minute.
+    ApiService().wakeServer();
+    WifiCredentials.instance.savedNetworks().then((saved) {
+      if (mounted) setState(() => _savedNetworks = saved);
+    });
     _lostSub = _setup.connectionLost.listen((_) {
       if (_step == _Step.choosingWifi || _step == _Step.sending) {
         _fail('Bluetooth connection lost',
@@ -59,6 +68,7 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
   }
 
   Timer? _slowTimer;
+  Set<String> _savedNetworks = {}; // Wi-Fi with a remembered password
   bool _searchingLong = false;
 
   @override
@@ -160,18 +170,54 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
   Future<void> _pickNetwork(WifiNetwork network) async {
     String? password = '';
     if (network.secure) {
+      // Retry after a wrong password: show what was typed. Otherwise use the
+      // password remembered from an earlier detector, if any.
+      final initial = network.ssid == _network?.ssid
+          ? _password
+          : await WifiCredentials.instance.passwordFor(network.ssid) ?? '';
+      if (!mounted) return;
       password = await showModalBottomSheet<String>(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
         builder: (_) => _PasswordSheet(
             ssid: network.ssid,
-            initial: network.ssid == _network?.ssid ? _password : ''),
+            initial: initial,
+            remembered: initial.isNotEmpty && network.ssid != _network?.ssid),
       );
       if (password == null) return; // cancelled
     }
     _network = network;
     _password = password;
+    await _send();
+  }
+
+  /// Wi-Fi from a QR code: connects straight away, no typing.
+  Future<void> _scanQr() async {
+    final qr = await Navigator.of(context)
+        .push<WifiQr>(MaterialPageRoute(builder: (_) => const QrScanScreen()));
+    if (qr == null || !mounted) return;
+    final seen = _networks.where((n) => n.ssid == qr.ssid).toList();
+    if (seen.isEmpty) {
+      final tryAnyway = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('"${qr.ssid}" not found nearby'),
+          content: const Text(
+              'The detector can\'t see this network. It may be a 5 GHz network (detectors need 2.4 GHz), '
+              'or too far from the router.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Try anyway')),
+          ],
+        ),
+      );
+      if (tryAnyway != true) return;
+    }
+    _network = seen.isNotEmpty
+        ? seen.first
+        : WifiNetwork(ssid: qr.ssid, rssi: -100, secure: !qr.open);
+    _password = qr.password;
     await _send();
   }
 
@@ -189,7 +235,11 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
       if (!mounted) return;
       if (status.state == 'done') {
         await _setup.disconnect();
-        setState(() => _step = _Step.success);
+        // It worked: remember the password for the next detector.
+        if (_password.isNotEmpty) {
+          await WifiCredentials.instance.save(_network!.ssid, _password);
+        }
+        if (mounted) setState(() => _step = _Step.success);
         return;
       }
       if (status.state == 'failed') {
@@ -524,6 +574,13 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
             'The detector shows the networks it can use. 5 GHz networks are not listed — that is normal.',
             style: TextStyle(color: muted, fontSize: 13),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+            onPressed: _scanQr,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Scan Wi-Fi QR code (no typing)'),
+          ),
           const SizedBox(height: 14),
           if (_scanningWifi && _networks.isEmpty)
             const Padding(
@@ -559,9 +616,12 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
                     ListTile(
                       leading: Icon(_wifiIcon(n.bars)),
                       title: Text(n.ssid, overflow: TextOverflow.ellipsis),
-                      subtitle: n.bars == 0
-                          ? const Text('Weak signal')
-                          : null,
+                      subtitle: _savedNetworks.contains(n.ssid)
+                          ? const Text('Password saved',
+                              style: TextStyle(color: Colors.greenAccent, fontSize: 12))
+                          : n.bars == 0
+                              ? const Text('Weak signal')
+                              : null,
                       trailing: n.secure
                           ? const Icon(Icons.lock_outline, size: 18)
                           : null,
@@ -636,7 +696,8 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
 class _PasswordSheet extends StatefulWidget {
   final String ssid;
   final String initial;
-  const _PasswordSheet({required this.ssid, required this.initial});
+  final bool remembered; // initial came from an earlier, successful setup
+  const _PasswordSheet({required this.ssid, required this.initial, this.remembered = false});
 
   @override
   State<_PasswordSheet> createState() => _PasswordSheetState();
@@ -688,7 +749,10 @@ class _PasswordSheetState extends State<_PasswordSheet> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Sent only to your detector over Bluetooth. NotiFire does not store your Wi-Fi password.',
+            widget.remembered
+                ? 'Saved password filled in from your last setup — just tap Connect.'
+                : 'Sent only to your detector over Bluetooth, and remembered (encrypted) on this phone '
+                    'for your next detector. NotiFire\'s server never receives it.',
             style: TextStyle(
                 fontSize: 12, color: Colors.white.withValues(alpha: 0.6)),
           ),

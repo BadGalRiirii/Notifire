@@ -7,6 +7,7 @@ import 'package:notifire/screens/auth_screens.dart';
 import 'package:notifire/screens/help_screen.dart';
 import 'package:notifire/widgets/export_sheet.dart';
 import 'package:notifire/services/push_service.dart';
+import 'package:notifire/services/wifi_credentials.dart';
 import 'package:notifire/services/device_setup.dart';
 import 'package:notifire/widgets/detector_sheets.dart';
 import 'package:notifire/widgets/ppm_gauge.dart';
@@ -194,6 +195,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('All time'), findsNothing); // readings are kept 30 days
     expect(find.text('Last 24 hours'), findsOneWidget);
+  });
+
+  test('Wi-Fi QR codes from routers and phones are read correctly', () {
+    final standard = WifiQr.parse('WIFI:T:WPA;S:Jjaaay;P:my pass;;')!;
+    expect((standard.ssid, standard.password, standard.open), ('Jjaaay', 'my pass', false));
+
+    // Android "Share Wi-Fi" puts fields in another order and escapes ; : \
+    final escaped = WifiQr.parse(r'WIFI:S:Home\;Net;T:WPA;P:a\:b\\c\;d;H:false;;')!;
+    expect((escaped.ssid, escaped.password), ('Home;Net', r'a:b\c;d'));
+
+    final quoted = WifiQr.parse('WIFI:S:"Cafe";T:WPA;P:"12345678";;')!;
+    expect((quoted.ssid, quoted.password), ('Cafe', '12345678'));
+
+    final open = WifiQr.parse('wifi:T:nopass;S:Guest;;')!;
+    expect((open.ssid, open.open), ('Guest', true));
+
+    expect(WifiQr.parse('https://example.com'), isNull); // not a Wi-Fi code
+    expect(WifiQr.parse('WIFI:T:WPA;P:secret;;'), isNull); // no network name
   });
 
   test('Wi-Fi signal bars from RSSI', () {
