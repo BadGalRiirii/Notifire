@@ -11,6 +11,7 @@ import 'package:notifire/services/wifi_credentials.dart';
 import 'package:notifire/services/device_setup.dart';
 import 'package:notifire/widgets/detector_sheets.dart';
 import 'package:notifire/widgets/ppm_gauge.dart';
+import 'package:notifire/widgets/form_bits.dart';
 
 Map<String, dynamic> _detectorJson({String? lastSeen, Map<String, dynamic>? latest}) => {
       'id': 1,
@@ -24,6 +25,21 @@ Map<String, dynamic> _detectorJson({String? lastSeen, Map<String, dynamic>? late
     };
 
 void main() {
+  test('Emails are cleaned of spaces, invisible characters and capitals', () {
+    const want = 'nicolasruilan30@gmail.com';
+    final zws = String.fromCharCode(0x200b), nbsp = String.fromCharCode(0xa0);
+    for (final typed in [
+      'Nicolasruilan30@gmail.com ',
+      'nicolasruilan30@gmail.com$zws',
+      '${nbsp}nicolasruilan30@gmail.com',
+      'nicolasruilan30@gmail,com',
+    ]) {
+      expect(cleanEmail(typed), want);
+      expect(validateEmail(typed), isNull);
+    }
+    expect(validateEmail('nicolasruilan30'), isNotNull);
+  });
+
   test('SensorReading tolerates DHT22 errors (null temp/humidity)', () {
     final r = SensorReading.fromJson({
       'gas': 400,

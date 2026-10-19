@@ -11,8 +11,9 @@
  *     advertises over Bluetooth as "NotiFire-XXXX".
  *   - In the app: Add detector → the app finds the device, asks it to scan
  *     for Wi-Fi, and sends the chosen Wi-Fi + password + detector code +
- *     server address. The ESP32 connects, checks the server accepts its
- *     code, saves everything to flash and restarts in normal mode.
+ *     server address. The ESP32 joins the Wi-Fi, saves everything to flash
+ *     and restarts in normal mode (Bluetooth off, so there's memory for
+ *     HTTPS); the app confirms setup when the first reading arrives.
  *   - To set it up again (new Wi-Fi, another room), hold BOOT for 5 seconds.
  *
  * The local alarm never depends on Wi-Fi: during setup or with the network
@@ -48,10 +49,9 @@
 #include "DHT.h"
 #include "root_ca.h"
 
-#define FW_VERSION "2.3"
+#define FW_VERSION "2.4"
 
 const char* INGEST_PATH = "/api/readings/ingest/";
-const char* CHECK_PATH  = "/api/device/check/";
 
 // Bluetooth setup protocol — must match mobile/lib/services/device_setup.dart
 #define SETUP_SERVICE_UUID "8f3b0001-6c4e-4f1a-9a57-2b1c7e5d4a10"
@@ -390,8 +390,13 @@ void handleCommand(const String& json) {
   }
 }
 
-// Runs every loop() in setup mode: connect to Wi-Fi, then confirm the server
-// accepts this detector's code before saving anything.
+// Runs every loop() in setup mode: connect to Wi-Fi; once that works, save
+// the settings and restart into normal mode.
+//
+// The server is NOT contacted here: an HTTPS (TLS) handshake needs ~45 KB of
+// RAM, which isn't available while Bluetooth is also running. After the
+// restart Bluetooth is off, the detector uploads over HTTPS normally, and the
+// app confirms setup by waiting for that first reading to reach the server.
 void provisioningTick() {
   if (provState == PROV_CONNECTING) {
     if (WiFi.status() == WL_CONNECTED) {
@@ -421,43 +426,14 @@ void provisioningTick() {
       sendStatus("failed", reason);
     }
   } else if (provState == PROV_CHECKING) {
-    sendStatus("checking_server");
-    int code = -1;
-    String body;
-    // Generous: first TLS handshake is slow, and a free Render server that
-    // was asleep holds the request while it wakes up.
-    if (beginRequest(provServer + CHECK_PATH, 30000)) {
-      http.addHeader("X-Detector-Code", provCode);
-      code = http.GET();
-      body = code > 0 ? http.getString() : "";
-      http.end();
-    }
-
-    if (code == 200) {
-      saveSettings();
-      JsonDocument resp;
-      deserializeJson(resp, body);
-      JsonDocument doc;
-      doc["type"] = "status";
-      doc["state"] = "done";
-      doc["room"] = resp["room"] | "";
-      sendEvent(doc);
-      Serial.println("Setup complete — restarting in normal mode...");
-      delay(1500);  // let the "done" message reach the app
-      ESP.restart();
-    } else {
-      Serial.print("Bluetooth: server check failed (HTTP ");
-      Serial.print(code);
-      Serial.println(")");
-      WiFi.disconnect();
-      provState = PROV_IDLE;
-      JsonDocument doc;
-      doc["type"] = "status";
-      doc["state"] = "failed";
-      doc["reason"] = code == 403 ? "bad_code" : "server_unreachable";
-      doc["http"] = code;
-      sendEvent(doc);
-    }
+    saveSettings();
+    JsonDocument doc;
+    doc["type"] = "status";
+    doc["state"] = "done";
+    sendEvent(doc);
+    Serial.println("Setup saved — restarting in normal mode to connect to the server...");
+    delay(1500);  // let the "done" message reach the app
+    ESP.restart();
   }
 }
 
@@ -486,6 +462,8 @@ void reportWifiChanges() {
   if (connected) {
     Serial.print("WiFi connected: ");
     Serial.println(WiFi.localIP());
+    // HTTPS certificates have validity dates; give the TLS library real time.
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
   } else {
     Serial.println("WiFi disconnected — reconnecting automatically...");
   }
@@ -539,6 +517,12 @@ void sendReading(int gasValue, float temperature, bool validTemperature,
     Serial.print(code);
     Serial.print(") to ");
     Serial.println(serverUrl);
+    if (code < 0 && serverUrl.startsWith("https://")) {
+      char tlsError[120];
+      int err = secureClient.lastError(tlsError, sizeof(tlsError));
+      Serial.printf("        TLS error %d: %s | free memory: %u bytes\n",
+                    err, tlsError, (unsigned)ESP.getFreeHeap());
+    }
   }
   http.end();
 }

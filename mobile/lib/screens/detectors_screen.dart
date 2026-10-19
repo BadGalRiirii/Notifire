@@ -1,10 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-import '../config.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/live_poll.dart';
 import '../services/session.dart';
 import '../widgets/detector_sheets.dart';
 import '../widgets/notice.dart';
@@ -20,27 +18,15 @@ class DetectorsScreen extends StatefulWidget {
   State<DetectorsScreen> createState() => _DetectorsScreenState();
 }
 
-class _DetectorsScreenState extends State<DetectorsScreen> {
+class _DetectorsScreenState extends State<DetectorsScreen>
+    with WidgetsBindingObserver, LivePolling<DetectorsScreen> {
   final _api = ApiService();
-  Timer? _timer;
 
   List<Detector>? _detectors;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _refresh();
-    _timer = Timer.periodic(AppConfig.pollInterval, (_) => _refresh());
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
+  Future<void> poll() async {
     try {
       final list = await _api.fetchDetectors();
       if (!mounted) return;
@@ -63,7 +49,7 @@ class _DetectorsScreenState extends State<DetectorsScreen> {
       setState(() => _detectors = [...?_detectors, created]);
       final result = await Navigator.of(context).push<SetupResult>(
           MaterialPageRoute(builder: (_) => SetupDeviceScreen(detector: created)));
-      _refresh();
+      refreshNow();
       if (result != SetupResult.addAnother) return;
     }
   }
@@ -71,7 +57,7 @@ class _DetectorsScreenState extends State<DetectorsScreen> {
   Future<void> _open(Detector d) async {
     await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => DetectorScreen(initial: d)));
-    _refresh(); // may have been renamed/deleted
+    refreshNow(); // may have been renamed/deleted
   }
 
   @override
@@ -94,7 +80,7 @@ class _DetectorsScreenState extends State<DetectorsScreen> {
             ),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _refresh,
+          onRefresh: refreshNow,
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
             children: [

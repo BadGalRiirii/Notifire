@@ -37,7 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       // On success the session changes and the app switches screens.
-      await ApiService().login(_email.text.trim(), _password.text);
+      await ApiService().login(cleanEmail(_email.text), _password.text);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -73,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? null
                       : () => Navigator.of(context).push(MaterialPageRoute(
                           builder: (_) =>
-                              ForgotPasswordScreen(initialEmail: _email.text.trim()))),
+                              ForgotPasswordScreen(initialEmail: cleanEmail(_email.text)))),
                   child: const Text('Forgot password?'),
                 ),
               ),
@@ -89,8 +89,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextButton(
                     onPressed: _busy
                         ? null
-                        : () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => const RegisterScreen())),
+                        : () async {
+                            final existing = await Navigator.of(context).push<String>(
+                                MaterialPageRoute(builder: (_) => const RegisterScreen()));
+                            if (existing != null && mounted) {
+                              setState(() {
+                                _email.text = existing;
+                                _error = null;
+                              });
+                            }
+                          },
                     child: const Text('Create one'),
                   ),
                 ],
@@ -139,13 +147,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       // The app root switches to the verify-email screen.
       await ApiService()
-          .register(_name.text.trim(), _email.text.trim(), _password.text);
+          .register(_name.text.trim(), cleanEmail(_email.text), _password.text);
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) {
+        setState(() {
+          _accountExists = e.message.contains('already exists');
+          _error = _accountExists
+              ? 'You already have a NotiFire account with this email. Log in instead, '
+                  "or reset your password if you don't remember it."
+              : e.message;
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  bool _accountExists = false;
 
   @override
   Widget build(BuildContext context) {
@@ -189,6 +207,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     v != _password.text ? 'Passwords do not match' : null,
               ),
               if (_error != null) ErrorText(_error!),
+              if (_accountExists)
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  children: [
+                    TextButton(
+                      // Back to Log in with the email filled in.
+                      onPressed: () => Navigator.of(context).pop(cleanEmail(_email.text)),
+                      child: const Text('Log in'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) =>
+                              ForgotPasswordScreen(initialEmail: cleanEmail(_email.text)))),
+                      child: const Text('Forgot password?'),
+                    ),
+                  ],
+                ),
               const SizedBox(height: 22),
               BusyButton(label: 'Create account', busy: _busy, onPressed: _submit),
               const SizedBox(height: 10),
@@ -367,7 +402,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _error = null;
     });
     try {
-      await ApiService().forgotPassword(_email.text.trim());
+      await ApiService().forgotPassword(cleanEmail(_email.text));
       if (mounted) setState(() => _codeSent = true);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -385,7 +420,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     try {
       // Logs in on success; the app root takes over.
       await ApiService()
-          .resetPassword(_email.text.trim(), _code.text, _password.text);
+          .resetPassword(cleanEmail(_email.text), _code.text, _password.text);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -398,7 +433,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     return _AuthScaffold(
       title: 'Reset password',
       subtitle: _codeSent
-          ? 'If an account exists for ${_email.text.trim()}, we emailed it a 6-digit code.'
+          ? 'If an account exists for ${cleanEmail(_email.text)}, we emailed it a 6-digit code.'
           : 'Enter your account email and we will send you a code.',
       showBack: true,
       form: Form(

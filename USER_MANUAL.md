@@ -113,6 +113,13 @@ Normal humid weather (75–84 %) does **not** cause a warning.
   earlier.
 - You also get a notice if a detector goes **offline** (loses power or
   Wi-Fi) and when it's **back online**.
+- **Works anywhere.** Your phone does not need to be on the home Wi-Fi. At
+  work, at school, on another Wi-Fi or on mobile data, the app still shows
+  live readings and you still get alerts. Only the **detector** needs the
+  home Wi-Fi.
+- **Make alerts reliable:** if *Settings* shows **"Alerts may be delayed"**,
+  tap **Allow**. Battery saving (strict on Xiaomi, Oppo, Vivo and Realme
+  phones) can otherwise hold alerts back while NotiFire is closed.
 
 > **In real danger: get everyone out of the house first, then call 911
 > (Bureau of Fire Protection). Don't wait for the app.**

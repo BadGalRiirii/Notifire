@@ -226,6 +226,14 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
       _step = _Step.sending;
       _sendState = 'sending';
     });
+    // Remember when the server last heard from this detector, so we can tell
+    // when the first reading after setup arrives.
+    try {
+      _baselineSeen = (await ApiService().fetchDetector(widget.detector.id)).lastSeenAt;
+    } on ApiException {
+      _baselineSeen = widget.detector.lastSeenAt;
+    }
+    if (!mounted) return;
     await for (final status in _setup.provision(
       ssid: _network!.ssid,
       password: _password,
@@ -235,11 +243,11 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
       if (!mounted) return;
       if (status.state == 'done') {
         await _setup.disconnect();
-        // It worked: remember the password for the next detector.
+        // Joined the Wi-Fi: remember the password for the next detector.
         if (_password.isNotEmpty) {
           await WifiCredentials.instance.save(_network!.ssid, _password);
         }
-        if (mounted) setState(() => _step = _Step.success);
+        await _waitForOnline();
         return;
       }
       if (status.state == 'failed') {
@@ -248,6 +256,33 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
       }
       setState(() => _sendState = status.state);
     }
+  }
+
+  DateTime? _baselineSeen;
+
+  /// The detector saved its settings and restarted (Bluetooth off). Setup is
+  /// confirmed when its first reading reaches the server: after the restart
+  /// and a 20 s sensor warm-up, usually within a minute.
+  Future<void> _waitForOnline() async {
+    setState(() {
+      _step = _Step.sending;
+      _sendState = 'waiting_online';
+    });
+    final api = ApiService();
+    final deadline = DateTime.now().add(const Duration(seconds: 100));
+    while (mounted && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      try {
+        final d = await api.fetchDetector(widget.detector.id);
+        if (d.lastSeenAt != null && d.lastSeenAt != _baselineSeen) {
+          if (mounted) setState(() => _step = _Step.success);
+          return;
+        }
+      } on ApiException {
+        // server waking up / brief network blip — keep waiting
+      }
+    }
+    if (mounted) _failFromReason('not_online');
   }
 
   void _failFromReason(String? reason) {
@@ -263,12 +298,17 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
       case 'server_unreachable':
         _fail('Can\'t reach the NotiFire server',
             'The detector joined your Wi-Fi but could not reach the server at ${AppConfig.baseUrl}. '
-                'Make sure the server is running and on the same Wi-Fi, then try again.',
+                'Make sure this Wi-Fi has internet access, then try again.',
             retry: _Step.choosingWifi);
       case 'bad_code':
         _fail('Detector not recognized',
             'The server did not accept this detector. Go back, delete it, and add it again.',
             retry: _Step.choosingWifi);
+      case 'not_online':
+        _fail('Not online yet',
+            'The detector joined your Wi-Fi and restarted, but no reading has reached NotiFire yet. '
+                'Give it another minute — or if it keeps failing, hold BOOT for 5 seconds and set it up again.',
+            retry: _Step.sending);
       case 'no_response':
         _fail('The detector stopped responding',
             'Keep your phone close to it and try again.', retry: _Step.searching);
@@ -295,6 +335,8 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
     switch (_retryStep) {
       case _Step.preparing:
         await _prepare();
+      case _Step.sending:
+        await _waitForOnline(); // "Not online yet" → keep waiting
       case _Step.choosingWifi:
         setState(() => _step = _Step.choosingWifi);
         if (_reaskPassword && _network != null) {
@@ -360,9 +402,8 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
         return _Centered(
           icon: Icons.check_circle,
           iconColor: Colors.greenAccent,
-          title: '${widget.detector.room} detector is connected!',
-          message:
-              'It is restarting now and will start sending readings within a minute. The light stops blinking once it is online.',
+          title: '${widget.detector.room} detector is online!',
+          message: 'Its first reading has arrived. You will be alerted if it senses smoke, gas or heat.',
           actions: [
             FilledButton(
               onPressed: () => Navigator.of(context).pop(SetupResult.done),
@@ -382,7 +423,9 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
           title: _failTitle,
           message: _failMessage,
           actions: [
-            FilledButton(onPressed: _retry, child: const Text('Try again')),
+            FilledButton(
+                onPressed: _retry,
+                child: Text(_retryStep == _Step.sending ? 'Keep waiting' : 'Try again')),
             TextButton(
                 onPressed: () => Navigator.of(context).pop(SetupResult.later),
                 child: const Text('Set up later')),
@@ -659,13 +702,13 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
     // Which of the three rows is in progress; earlier rows show as done.
     final stage = switch (_sendState) {
       'connecting_wifi' => 1,
-      'wifi_connected' || 'checking_server' => 2,
+      'wifi_connected' || 'checking_server' || 'waiting_online' => 2,
       _ => 0,
     };
     final steps = [
       'Sending Wi-Fi details',
       'Connecting to "${_network?.ssid}"',
-      'Checking connection to NotiFire',
+      'Waiting for the first reading',
     ];
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -679,7 +722,10 @@ class _SetupDeviceScreenState extends State<SetupDeviceScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('This takes up to 30 seconds.',
+          Text(
+              _sendState == 'waiting_online'
+                  ? 'The detector is restarting and warming up its sensors. This takes about a minute.'
+                  : 'This takes a few seconds.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white.withValues(alpha: 0.65))),
           const SizedBox(height: 28),

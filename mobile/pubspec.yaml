@@ -3,7 +3,7 @@ description: Solar-Powered IoT-Based Smoke and Fire Detection System — mobile 
 publish_to: "none"
 # Bump BOTH numbers for every release you hand out (name+code); Android only
 # installs an update whose code (after +) is higher than the installed one.
-version: 1.4.1+9
+version: 1.5.0+10
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

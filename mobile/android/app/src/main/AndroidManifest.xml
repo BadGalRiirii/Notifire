@@ -15,8 +15,12 @@
 
     <!-- Fire / offline alerts (Android 13+ asks the user once). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- usesCleartextTraffic: the backend is plain HTTP on the local Wi-Fi
-         (AppConfig.baseUrl), which Android 9+ blocks by default. -->
+    <!-- Lets the user exempt NotiFire from battery optimization (Settings →
+         "Alerts may be delayed") so fire alerts aren't held back. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- The app uses HTTPS (AppConfig.baseUrl) from any network.
+         usesCleartextTraffic only allows plain-HTTP test builds pointed at a
+         server on a PC (API_BASE_URL=http://...). -->
     <application
         android:label="NotiFire"
         android:name="${applicationName}"

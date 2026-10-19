@@ -1,11 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../config.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/live_poll.dart';
 import '../widgets/detector_sheets.dart';
 import '../widgets/notice.dart';
 import '../widgets/ppm_gauge.dart';
@@ -23,28 +21,16 @@ class DetectorScreen extends StatefulWidget {
   State<DetectorScreen> createState() => _DetectorScreenState();
 }
 
-class _DetectorScreenState extends State<DetectorScreen> {
+class _DetectorScreenState extends State<DetectorScreen>
+    with WidgetsBindingObserver, LivePolling<DetectorScreen> {
   final _api = ApiService();
-  Timer? _timer;
 
   late Detector _detector = widget.initial;
   String? _error;
   bool _toggleBusy = false;
 
   @override
-  void initState() {
-    super.initState();
-    _refresh();
-    _timer = Timer.periodic(AppConfig.pollInterval, (_) => _refresh());
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
+  Future<void> poll() async {
     try {
       final d = await _api.fetchDetector(_detector.id);
       if (!mounted) return;
@@ -81,7 +67,7 @@ class _DetectorScreenState extends State<DetectorScreen> {
   Future<void> _connectDevice() async {
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => SetupDeviceScreen(detector: _detector)));
-    _refresh();
+    refreshNow();
   }
 
   Future<void> _delete() async {
@@ -177,7 +163,7 @@ class _DetectorScreenState extends State<DetectorScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _refresh,
+        onRefresh: refreshNow,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
           children: [

@@ -21,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     with WidgetsBindingObserver {
   final _api = ApiService();
   bool? _systemAllowed; // Android notification permission for NotiFire
+  bool? _batteryExempt; // excluded from Android battery optimization
   bool _saving = false;
 
   @override
@@ -53,7 +54,21 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _checkPermission() async {
     final allowed = await PushService.instance.permissionGranted();
-    if (mounted) setState(() => _systemAllowed = allowed);
+    final exempt = await Permission.ignoreBatteryOptimizations.isGranted;
+    if (mounted) {
+      setState(() {
+        _systemAllowed = allowed;
+        _batteryExempt = exempt;
+      });
+    }
+  }
+
+  /// Battery savers (strict on Xiaomi, Oppo, Vivo, Realme…) can hold back
+  /// alerts while NotiFire is closed; an exemption lets them arrive at once.
+  Future<void> _allowBackground() async {
+    final status = await Permission.ignoreBatteryOptimizations.request();
+    if (!status.isGranted) await openAppSettings();
+    _checkPermission();
   }
 
   Future<void> _enableNotifications() async {
@@ -209,6 +224,19 @@ class _SettingsScreenState extends State<SettingsScreen>
                           onPressed: _enableNotifications, child: const Text('Turn on')),
                     ),
                   ),
+                if (push.available && _batteryExempt == false)
+                  Card(
+                    color: Colors.orange.withValues(alpha: 0.15),
+                    child: ListTile(
+                      leading: const Icon(Icons.battery_alert, color: Colors.orange),
+                      title: const Text('Alerts may be delayed'),
+                      subtitle: const Text(
+                          'Battery saving can hold back fire alerts while NotiFire is closed. '
+                          'Allow NotiFire to run in the background so alerts reach you anywhere, at once.'),
+                      trailing: FilledButton(
+                          onPressed: _allowBackground, child: const Text('Allow')),
+                    ),
+                  ),
                 Card(
                   child: Column(
                     children: [
@@ -362,13 +390,13 @@ class _ChangeEmailScreenState extends State<ChangeEmailScreen> {
     });
     try {
       if (!_codeSent) {
-        await ApiService().requestEmailChange(_password.text, _email.text.trim());
+        await ApiService().requestEmailChange(_password.text, cleanEmail(_email.text));
         if (mounted) setState(() => _codeSent = true);
       } else {
         await ApiService().confirmEmailChange(_code.text);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Email changed to ${_email.text.trim()}')));
+            SnackBar(content: Text('Email changed to ${cleanEmail(_email.text)}')));
         Navigator.of(context).pop();
       }
     } on ApiException catch (e) {
@@ -410,7 +438,7 @@ class _ChangeEmailScreenState extends State<ChangeEmailScreen> {
               ),
             ] else ...[
               const SizedBox(height: 16),
-              Text('Enter the 6-digit code we sent to ${_email.text.trim()}.'),
+              Text('Enter the 6-digit code we sent to ${cleanEmail(_email.text)}.'),
               const SizedBox(height: 10),
               CodeField(controller: _code, onCompleted: (_) => _submit()),
             ],

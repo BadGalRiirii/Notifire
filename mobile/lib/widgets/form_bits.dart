@@ -66,8 +66,18 @@ String? validateNewPassword(String? v) {
 
 final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 
+// Spaces plus the invisible characters keyboards and autofill can slip in
+// (zero-width space/joiners, no-break space, word joiner, BOM).
+final _emailJunk = RegExp(r"[\s\u00a0\u200b-\u200d\u2060\ufeff]");
+
+/// The email as the server should see it: no spaces or invisible
+/// characters, lowercase, and a keyboard-suggested comma read as a dot
+/// (emails can't contain commas).
+String cleanEmail(String v) =>
+    v.replaceAll(_emailJunk, '').replaceAll(',', '.').toLowerCase();
+
 String? validateEmail(String? v) =>
-    (v == null || !emailPattern.hasMatch(v.trim())) ? 'Enter a valid email' : null;
+    (v == null || !emailPattern.hasMatch(cleanEmail(v))) ? 'Enter a valid email' : null;
 
 /// Large 6-digit code input.
 class CodeField extends StatelessWidget {

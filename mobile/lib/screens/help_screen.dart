@@ -71,6 +71,8 @@ class HelpScreen extends StatelessWidget {
               'If the app is closed, you get a notification. Tap it to see what happened.',
               'Alert details shows what triggered it, the readings at that moment, and how the room is right now.',
               'Smoke can clear in seconds. When the room is safe again, the alert changes to "back to normal" and still says what happened.',
+              'Works anywhere: your phone does not need the home Wi-Fi. On another Wi-Fi or mobile data you still see live readings and get alerts. Only the detector needs the home Wi-Fi.',
+              'If Settings shows "Alerts may be delayed", tap Allow so battery saving does not hold back alerts while NotiFire is closed.',
             ],
             note: 'In real danger: get everyone out of the house first, then call 911 (Bureau of Fire Protection). '
                 'Do not wait for the app.',
