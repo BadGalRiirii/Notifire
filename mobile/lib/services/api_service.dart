@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
@@ -44,6 +45,10 @@ class ApiService {
   }
 
   http.Client get _client => _shared;
+
+  /// Tests: answer requests with a fake server instead of the network.
+  @visibleForTesting
+  static void useClient(http.Client client) => _shared = client;
 
   Uri _u(String path, [Map<String, String>? query]) =>
       Uri.parse('$baseUrl$path').replace(queryParameters: query);

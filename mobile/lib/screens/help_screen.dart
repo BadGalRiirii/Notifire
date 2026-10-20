@@ -145,6 +145,15 @@ class HelpScreen extends StatelessWidget {
                   a: 'Look in Spam, then tap Resend code. Codes expire after 15 minutes.'),
               _Faq(q: '"Cannot reach server"',
                   a: 'Check your phone\'s internet. If the service was idle it can take up to a minute to wake up — try again.'),
+              _Faq(q: 'The detector works but my phone gets no alerts',
+                  a: 'Alerts go to the account the detector belongs to and to people it is shared with. '
+                      'Log in with that account, or ask its owner to add you with Share with household.'),
+              _Faq(q: 'Login says my email "is not an email address"',
+                  a: 'The quotes show what the app read. If it is your name, your phone filled in the wrong saved login: '
+                      'clear the box, type your email, and delete the wrong entry in your password manager.'),
+              _Faq(q: 'A shared detector does not appear',
+                  a: 'Create your account with the same email the owner typed and verify it with the emailed code, '
+                      'then pull down to refresh.'),
             ],
           ),
           _Section(

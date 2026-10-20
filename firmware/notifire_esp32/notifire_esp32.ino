@@ -49,7 +49,7 @@
 #include "DHT.h"
 #include "root_ca.h"
 
-#define FW_VERSION "2.4"
+#define FW_VERSION "2.5"
 
 const char* INGEST_PATH = "/api/readings/ingest/";
 
@@ -88,6 +88,9 @@ const unsigned long WARMUP_MS            = 20000;  // MQ-5 heater warm-up after 
 const unsigned long RESET_HOLD_MS        = 5000;
 const unsigned long WIFI_SETUP_TIMEOUT   = 20000;
 const unsigned long SETUP_BLINK_MS       = 500;
+// Keep sounding this long after the last high reading: a puff of gas or
+// smoke can clear in seconds, and a 2-second chirp is easy to miss.
+const unsigned long ALARM_HOLD_MS        = 30000;
 
 DHT dht(DHTPIN, DHTTYPE);
 Preferences prefs;
@@ -126,6 +129,7 @@ unsigned long lastBlinkAt = 0;
 bool warmupDone = false;
 bool mq5Enabled = true;     // synced from the app via backend response
 bool alarmActive = false;
+unsigned long lastTriggerAt = 0;  // last reading over a threshold
 bool wasWifiConnected = false;
 
 // ==================== SETTINGS ====================
@@ -557,6 +561,8 @@ void setup() {
   Serial.println();
   Serial.println("==========================================");
   Serial.println(" NOTIFIRE — ESP32 GAS & ENVIRONMENT MONITOR");
+  Serial.print(" Firmware ");
+  Serial.println(FW_VERSION);
   Serial.println("==========================================");
 
   loadSettings();
@@ -652,9 +658,13 @@ void loop() {
   bool humidityAlert =
       validHumidity && humidity > HIGH_HUMID_THRESHOLD;
 
-  // Trigger if ANY valid sensor reaches its threshold
-  bool alarmTriggered =
-      gasAlert || temperatureAlert || humidityAlert;
+  // Trigger if ANY valid sensor reaches its threshold, and keep sounding
+  // for ALARM_HOLD_MS after the last such reading.
+  bool overThreshold = gasAlert || temperatureAlert || humidityAlert;
+  if (overThreshold) lastTriggerAt = currentTime;
+  bool holding = !overThreshold && lastTriggerAt != 0 &&
+                 currentTime - lastTriggerAt < ALARM_HOLD_MS;
+  bool alarmTriggered = overThreshold || holding;
   alarmActive = alarmTriggered;
 
   // ==================== CONTROL LED & BUZZER ====================
@@ -665,6 +675,7 @@ void loop() {
     ledcWriteTone(BUZZER_PIN, ALARM_PITCH);
     ledcWrite(BUZZER_PIN, 128);
 
+    Serial.println("Status: ALARM");
     Serial.println("!!! ALERT ACTIVATED !!!");
 
     if (gasAlert) {
@@ -677,6 +688,12 @@ void loop() {
 
     if (humidityAlert) {
       Serial.println("Reason: High humidity.");
+    }
+
+    if (holding) {
+      Serial.print("Readings are back to normal; alarm stops in ");
+      Serial.print((ALARM_HOLD_MS - (currentTime - lastTriggerAt) + 999) / 1000);
+      Serial.println(" s.");
     }
 
     Serial.println("LED: ON");

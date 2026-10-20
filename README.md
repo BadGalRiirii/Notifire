@@ -23,6 +23,9 @@ ESP32 detectors (MQ-5 + DHT22)  ──HTTP POST + detector code──►  Django
    server address. Every ESP32 runs the **same firmware** — nothing to edit.
 4. The ESP32 sends readings with its code; the backend files them under the
    right detector and user.
+5. The owner can **share** a detector with others in the household by email.
+   Everyone it's shared with sees it live and gets its alerts on their own
+   phone; only the owner can change or delete it.
 
 **Using NotiFire?** See the [User Manual](USER_MANUAL.md), which is also in the app
 under Settings → How to use NotiFire.
@@ -56,6 +59,12 @@ reading (0–4095)**. It is uncalibrated and is not ppm.
 To change a DANGER threshold, update **both** the `*_THRESHOLD` constants in
 the firmware and `NOTIFIRE_*_DANGER` in `backend/.env`. If a DHT22 read fails,
 that value is sent as `null` and left out of the decision.
+
+A puff of gas can clear in seconds, so alarms are held: the buzzer keeps
+sounding for **30 s** after the last high reading (firmware `ALARM_HOLD_MS`),
+and the app shows a room at its most severe level of the last **60 s**
+(backend `ALERT_HOLD`). "Back to normal" is sent after a minute of safe
+readings.
 
 Only **WARNING** and **DANGER** events are saved to History logs (with a
 60-second cooldown per detector so a sustained alarm doesn't flood the list).

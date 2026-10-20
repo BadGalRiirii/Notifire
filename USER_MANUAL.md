@@ -35,7 +35,7 @@ Each detector has:
 | **Smoke/gas sensor (MQ-5)** | Senses smoke and gas (LPG/butane) |
 | **Temperature & humidity sensor (DHT22)** | Senses heat and very high humidity |
 | **Light (LED)** | **Blinking**: ready to be set up. **Steady on**: alarm. **Off**: normal. |
-| **Buzzer** | Sounds when the detector senses danger, with or without Wi-Fi |
+| **Buzzer** | Sounds when the detector senses danger, with or without Wi-Fi, and keeps sounding for **30 seconds** after the air clears |
 | **BOOT button** | Hold for **5 seconds** to reset the detector so it can be set up again |
 
 The detector needs power and a **2.4 GHz** Wi-Fi network. Most home routers
@@ -91,7 +91,7 @@ Setting up several rooms? Tap **Add another detector** after each one.
 |---|---|
 | 🟢 **SAFE** | Everything is normal. |
 | 🟡 **WARNING** | Smoke/gas is rising (above 1200) or temperature is 35 °C or more. Check the room. |
-| 🔴 **DANGER** | Smoke/gas above 1500, temperature above 40 °C, or humidity above 85 %. **The buzzer sounds.** |
+| 🔴 **DANGER** | Smoke/gas above 1500, temperature above 40 °C, or humidity above 85 %. **The buzzer sounds.** Stays red for 1 minute after the last high reading. |
 | ⚪ **OFFLINE** | The detector stopped sending readings. Check its power and Wi-Fi. |
 | 🔵 **SET UP** | The detector hasn't been connected yet. Open it and tap **Connect device**. |
 
@@ -220,7 +220,11 @@ Up to 10 people per detector.
 | No notifications | **Settings → Notifications**: make sure alerts are on. If it says notifications are off, tap **Turn on**. |
 | No email code | Look in **Spam**, then tap **Resend code**. Codes expire after 15 minutes. |
 | "Cannot reach server" | Check your phone's internet. If the service was idle it can take up to a minute to wake up, so try again. |
-| Buzzer sounds but the app says SAFE | The detector may be offline (check its status), or the reading changed between updates. Check **History**. |
+| Login says *"…" is not an email address* | The quotes show what the app read. If it's your name, your phone autofilled the wrong saved login: clear the box and type your email, and delete the wrong entry in your phone's password manager. |
+| "Incorrect email or password" | Check the password, or tap **Forgot password?** to get a code by email. |
+| The detector works but **my phone gets no alerts** | Alerts go to the account the detector belongs to, and to people it's shared with. Log in with that account, or ask its owner to add you with **Share with household**. |
+| A shared detector doesn't appear | Use the **same email** the owner typed, and verify it with the emailed code. Then pull down to refresh the Detectors list. |
+| Buzzer sounds but the app says SAFE | The detector may be offline: check its status and Wi-Fi. If it's online, pull down to refresh and check **History**. |
 
 ---
 
@@ -228,8 +232,9 @@ Up to 10 people per detector.
 
 - **The detector's buzzer is the main alarm.** It works even without Wi-Fi
   or the app.
-- **Phone alerts are an extra layer.** They need Wi-Fi, internet and your
-  phone to work.
+- **Phone alerts are an extra layer.** The detector needs Wi-Fi, and your
+  phone needs internet (any Wi-Fi or mobile data). Share each detector with
+  everyone at home so more than one phone is alerted.
 - **A new smoke/gas sensor needs about 48 hours** powered on before its
   readings are steady. Expect a few false alarms at first.
 - **Test each detector once a month**, for example with a short puff of gas
