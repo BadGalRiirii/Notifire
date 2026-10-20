@@ -1,17 +1,13 @@
-# notifire
+# NotiFire — Mobile App
 
-A new Flutter project.
+The Flutter (Android) app for NotiFire. It covers accounts, the detectors panel, Bluetooth device setup, live room dashboards, push alerts, household sharing and history export.
 
-## Getting Started
+```bash
+flutter pub get
+flutter test
+flutter build apk --release
+```
 
-This project is a starting point for a Flutter application.
+The app uses the production server by default. To use a local server, add `--dart-define=API_BASE_URL=http://<your-pc-ip>:8000`.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+See the [main README](../README.md) for the full system overview and the [User Manual](../USER_MANUAL.md) for how to use the app.
