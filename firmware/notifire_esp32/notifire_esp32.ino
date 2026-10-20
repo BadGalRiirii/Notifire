@@ -49,7 +49,7 @@
 #include "DHT.h"
 #include "root_ca.h"
 
-#define FW_VERSION "2.5"
+#define FW_VERSION "2.6"
 
 const char* INGEST_PATH = "/api/readings/ingest/";
 
@@ -91,6 +91,13 @@ const unsigned long SETUP_BLINK_MS       = 500;
 // Keep sounding this long after the last high reading: a puff of gas or
 // smoke can clear in seconds, and a 2-second chirp is easy to miss.
 const unsigned long ALARM_HOLD_MS        = 30000;
+// Self-recovery: auto-reconnect can give up after a router restart, and a
+// broken TLS connection can keep failing, leaving the detector silent until
+// someone unplugs it. Kick Wi-Fi after this long disconnected...
+const unsigned long WIFI_RETRY_MS        = 30000;
+// ...and restart the board if the server hasn't answered for this long
+// (never while the alarm is sounding).
+const unsigned long NO_SERVER_RESTART_MS = 600000;  // 10 min
 
 DHT dht(DHTPIN, DHTTYPE);
 Preferences prefs;
@@ -131,6 +138,8 @@ bool mq5Enabled = true;     // synced from the app via backend response
 bool alarmActive = false;
 unsigned long lastTriggerAt = 0;  // last reading over a threshold
 bool wasWifiConnected = false;
+unsigned long wifiLostAt = 0;       // 0 = connected
+unsigned long lastServerReplyAt = 0;  // any HTTP response, even an error
 
 // ==================== SETTINGS ====================
 void loadSettings() {
@@ -473,6 +482,27 @@ void reportWifiChanges() {
   }
 }
 
+void connectionWatchdog() {
+  unsigned long now = millis();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiLostAt = 0;
+  } else if (wifiLostAt == 0) {
+    wifiLostAt = now;
+  } else if (now - wifiLostAt >= WIFI_RETRY_MS) {
+    Serial.println("WiFi still down — retrying the connection...");
+    WiFi.disconnect();
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    wifiLostAt = now;
+  }
+
+  if (!alarmActive && now - lastServerReplyAt >= NO_SERVER_RESTART_MS) {
+    Serial.println("No reply from the server for 10 minutes — restarting...");
+    delay(100);
+    ESP.restart();
+  }
+}
+
 // ==================== UPLOAD ====================
 void sendReading(int gasValue, float temperature, bool validTemperature,
                  float humidity, bool validHumidity) {
@@ -500,6 +530,7 @@ void sendReading(int gasValue, float temperature, bool validTemperature,
   http.addHeader("X-Detector-Code", detectorCode);
 
   int code = http.POST(body);
+  if (code > 0) lastServerReplyAt = millis();
   if (code == 201) {
     // Backend echoes this detector's app-controlled MQ-5 toggle.
     JsonDocument resp;
@@ -529,6 +560,11 @@ void sendReading(int gasValue, float temperature, bool validTemperature,
     }
   }
   http.end();
+  // Don't reuse a connection that just failed; the next upload opens a fresh one.
+  if (code < 0) {
+    secureClient.stop();
+    plainClient.stop();
+  }
 }
 
 // ==================== SETUP ====================
@@ -602,6 +638,7 @@ void loop() {
     blinkSetupLed();
   } else {
     reportWifiChanges();
+    connectionWatchdog();
   }
 
   unsigned long currentTime = millis();
