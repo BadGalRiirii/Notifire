@@ -12,7 +12,9 @@
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-Push-FFCA28?logo=firebase&logoColor=black)
 
-[User Manual](USER_MANUAL.md) · [Deployment Guide](DEPLOYMENT.md)
+**[⬇️ Download the latest app (APK)](https://github.com/BadGalRiirii/Notifire/releases/latest)**
+
+[User Manual](USER_MANUAL.md) · [Deployment Guide](DEPLOYMENT.md) · [All releases](https://github.com/BadGalRiirii/Notifire/releases)
 
 </div>
 
@@ -204,6 +206,8 @@ flutter build apk --release --dart-define=API_BASE_URL=http://192.168.100.89:800
 ```
 
 The APK is written to `build/app/outputs/flutter-apk/app-release.apk`.
+
+**Releases:** each version is published on the [Releases page](https://github.com/BadGalRiirii/Notifire/releases) as `NotiFire-vX.Y.Z.apk`, and the newest is marked **Latest**. To publish one, bump `version:` in `pubspec.yaml`, build, then create a `vX.Y.Z` release with the APK attached.
 
 ### Features
 
