@@ -49,7 +49,7 @@
 #include "DHT.h"
 #include "root_ca.h"
 
-#define FW_VERSION "2.6"
+#define FW_VERSION "2.7"
 
 const char* INGEST_PATH = "/api/readings/ingest/";
 
@@ -98,6 +98,9 @@ const unsigned long WIFI_RETRY_MS        = 30000;
 // ...and restart the board if the server hasn't answered for this long
 // (never while the alarm is sounding).
 const unsigned long NO_SERVER_RESTART_MS = 600000;  // 10 min
+// OK on the alarm in the app stops the buzzer (the LED stays on). If the
+// danger is still there after this long, the buzzer sounds again.
+const unsigned long SILENCE_MAX_MS       = 300000;  // 5 min
 
 DHT dht(DHTPIN, DHTTYPE);
 Preferences prefs;
@@ -137,6 +140,8 @@ bool warmupDone = false;
 bool mq5Enabled = true;     // synced from the app via backend response
 bool alarmActive = false;
 unsigned long lastTriggerAt = 0;  // last reading over a threshold
+bool buzzerSilenced = false;      // OK tapped in the app during this alarm
+unsigned long silencedAt = 0;
 bool wasWifiConnected = false;
 unsigned long wifiLostAt = 0;       // 0 = connected
 unsigned long lastServerReplyAt = 0;  // any HTTP response, even an error
@@ -541,6 +546,13 @@ void sendReading(int gasValue, float temperature, bool validTemperature,
         Serial.print("MQ-5 toggled from app: ");
         Serial.println(mq5Enabled ? "ON" : "OFF");
       }
+      if ((resp["silence"] | false) && alarmActive && !buzzerSilenced) {
+        buzzerSilenced = true;
+        silencedAt = millis();
+        ledcWrite(BUZZER_PIN, 0);
+        ledcWriteTone(BUZZER_PIN, 0);
+        Serial.println("Buzzer silenced from the app (LED stays on).");
+      }
     }
     Serial.println("Upload: OK");
   } else if (code == 403) {
@@ -704,13 +716,24 @@ void loop() {
   bool alarmTriggered = overThreshold || holding;
   alarmActive = alarmTriggered;
 
+  // A silence lasts for this alarm only, and at most SILENCE_MAX_MS.
+  if (buzzerSilenced && (!alarmTriggered || currentTime - silencedAt >= SILENCE_MAX_MS)) {
+    buzzerSilenced = false;
+    if (alarmTriggered) Serial.println("Still dangerous — buzzer back on.");
+  }
+
   // ==================== CONTROL LED & BUZZER ====================
   if (alarmTriggered) {
     digitalWrite(LED_PIN, HIGH);
 
-    // Continuous buzzer tone
-    ledcWriteTone(BUZZER_PIN, ALARM_PITCH);
-    ledcWrite(BUZZER_PIN, 128);
+    if (buzzerSilenced) {
+      ledcWrite(BUZZER_PIN, 0);
+      ledcWriteTone(BUZZER_PIN, 0);
+    } else {
+      // Continuous buzzer tone
+      ledcWriteTone(BUZZER_PIN, ALARM_PITCH);
+      ledcWrite(BUZZER_PIN, 128);
+    }
 
     Serial.println("Status: ALARM");
     Serial.println("!!! ALERT ACTIVATED !!!");
@@ -734,7 +757,7 @@ void loop() {
     }
 
     Serial.println("LED: ON");
-    Serial.println("BUZZER: ON");
+    Serial.println(buzzerSilenced ? "BUZZER: SILENCED (from app)" : "BUZZER: ON");
 
   } else {
     if (!setupMode) digitalWrite(LED_PIN, LOW);  // setup mode keeps blinking
@@ -751,9 +774,12 @@ void loop() {
   // ==================== UPLOAD TO BACKEND ====================
   // Done after the alarm is set, so a slow network never delays the buzzer.
   // Every UPLOAD_INTERVAL, or right away when the alarm turns on/off so the
-  // app and push notification follow within seconds.
+  // app and push notification follow within seconds. While the buzzer is
+  // sounding, every reading, so OK in the app silences it quickly.
   bool alarmChanged = alarmTriggered != lastUploadedAlarm;
-  if (alarmChanged || lastUploadAt == 0 || currentTime - lastUploadAt >= UPLOAD_INTERVAL) {
+  unsigned long uploadEvery =
+      alarmTriggered && !buzzerSilenced ? SENSOR_INTERVAL : UPLOAD_INTERVAL;
+  if (alarmChanged || lastUploadAt == 0 || currentTime - lastUploadAt >= uploadEvery) {
     lastUploadAt = currentTime;
     lastUploadedAlarm = alarmTriggered;
     sendReading(gasValue, temperature, validTemperature, humidity, validHumidity);

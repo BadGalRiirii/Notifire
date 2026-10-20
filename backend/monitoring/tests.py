@@ -627,6 +627,42 @@ class SharingTests(ApiTestCase):
         self.assertEqual(len(self.client.get("/api/detectors/").json()), 1)
 
 
+class SilenceTests(ApiTestCase):
+    """OK on an alarm in the app silences the detector's buzzer."""
+
+    def setUp(self):
+        super().setUp()
+        self.owner_token = self.register(email="maria@example.com", name="Maria")
+        self.auth(self.owner_token)
+        self.kitchen = self.client.post("/api/detectors/", {"room": "Kitchen"}, format="json").json()
+        self.base = f"/api/detectors/{self.kitchen['id']}"
+        self.juan_token = self.register(email="juan@example.com", name="Juan")
+        self.auth(self.owner_token)
+
+    share = SharingTests.share
+
+    def test_silence_is_handed_to_the_detector_once(self):
+        code = self.kitchen["code"]
+        self.assertFalse(self.ingest(code, gas=2000).json()["silence"])
+        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 204)
+        self.assertTrue(self.ingest(code, gas=2000).json()["silence"])
+        self.assertFalse(self.ingest(code, gas=2000).json()["silence"])
+
+    def test_household_member_can_silence_but_strangers_cannot(self):
+        self.share("juan@example.com")
+        self.auth(self.juan_token)
+        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 204)
+        self.auth(self.register(email="ana@example.com", name="Ana"))
+        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 404)
+        self.assertTrue(self.ingest(self.kitchen["code"]).json()["silence"])
+
+    def test_old_request_does_not_mute_a_later_alarm(self):
+        self.client.post(f"{self.base}/silence/")
+        Detector.objects.update(silence_requested_at=timezone.now() - timedelta(minutes=5))
+        self.assertFalse(self.ingest(self.kitchen["code"], gas=2000).json()["silence"])
+        self.assertIsNone(Detector.objects.get().silence_requested_at)
+
+
 class ExportTests(ApiTestCase):
     def setUp(self):
         super().setUp()

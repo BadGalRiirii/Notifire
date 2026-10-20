@@ -263,6 +263,12 @@ class ApiService {
     return Detector.fromJson(body as Map<String, dynamic>);
   }
 
+  /// Stops the detector's buzzer during an alarm (owner or household member).
+  /// It reaches the detector with its next upload, within a few seconds.
+  Future<void> silenceBuzzer(int id) async {
+    await _act(() => _client.post(_u('/api/detectors/$id/silence/'), headers: _headers));
+  }
+
   Future<void> deleteDetector(int id) async {
     await _act(() => _client.delete(_u('/api/detectors/$id/'), headers: _headers));
   }

@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 # condition persists: only log a new entry when the level changes, or after
 # this cooldown while the same non-safe level continues.
 LOG_COOLDOWN_SECONDS = 60
+# A silence request the detector hasn't picked up by then (offline, or the
+# alarm already over) is dropped, so an old tap can't mute a later alarm.
+SILENCE_REQUEST_TTL_SECONDS = 60
 
 
 class DetectorCodeThrottle(SimpleRateThrottle):
@@ -173,6 +176,18 @@ def leave_detector(request, pk):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@api_view(["POST"])
+def silence_buzzer(request, pk):
+    """Someone tapped OK on an alarm (owner or member: anyone it alerts).
+    The detector gets this with its next upload and stops its buzzer; its
+    LED stays on, and the buzzer sounds again if the danger outlasts the
+    firmware's silence period."""
+    detector = get_object_or_404(accessible_detectors(request.user), pk=pk)
+    detector.silence_requested_at = timezone.now()
+    detector.save(update_fields=["silence_requested_at"])
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 @api_view(["GET"])
 def detector_readings(request, pk):
     """Recent raw readings for one detector (for charts). ?limit=50"""
@@ -263,6 +278,12 @@ def ingest_reading(request):
     detector.last_seen_at = reading.created_at
     detector.offline_notified_at = None
     update_fields = ["last_seen_at", "offline_notified_at"]
+    silence = False
+    if detector.silence_requested_at is not None:  # delivered once, then cleared
+        age = (timezone.now() - detector.silence_requested_at).total_seconds()
+        silence = age <= SILENCE_REQUEST_TTL_SECONDS
+        detector.silence_requested_at = None
+        update_fields.append("silence_requested_at")
     if result.level == Level.SAFE and detector.alert_level and held_before == Level.SAFE:
         # The owner was alerted earlier and the room has now read safe for a
         # whole ALERT_HOLD: replace that alert with "back to normal".
@@ -306,6 +327,7 @@ def ingest_reading(request):
             "level": result.level,
             "log_created": log_created,
             "mq5_enabled": detector.mq5_enabled,  # ESP32 reads this to sync its toggle
+            "silence": silence,  # ESP32 stops its buzzer (OK tapped in the app)
         },
         status=status.HTTP_201_CREATED,
     )

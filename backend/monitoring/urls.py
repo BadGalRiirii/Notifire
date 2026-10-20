@@ -25,6 +25,7 @@ urlpatterns = [
     path("detectors/<int:pk>/members/", views.detector_members),
     path("detectors/<int:pk>/members/me/", views.leave_detector),
     path("detectors/<int:pk>/members/<int:member_id>/", views.detector_member_detail),
+    path("detectors/<int:pk>/silence/", views.silence_buzzer),
     path("detectors/<int:pk>/readings/", views.detector_readings),
     path("detectors/<int:pk>/readings/export/", exports.export_readings),
     path("logs/", views.detection_logs),

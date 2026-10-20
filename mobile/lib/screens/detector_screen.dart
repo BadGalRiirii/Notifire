@@ -29,6 +29,7 @@ class _DetectorScreenState extends State<DetectorScreen>
   late Detector _detector = widget.initial;
   String? _error;
   bool _toggleBusy = false;
+  bool _silenceBusy = false;
 
   @override
   Future<void> poll() async {
@@ -57,6 +58,18 @@ class _DetectorScreenState extends State<DetectorScreen>
       _snack('Toggle failed: ${e.message}');
     } finally {
       if (mounted) setState(() => _toggleBusy = false);
+    }
+  }
+
+  Future<void> _silence() async {
+    setState(() => _silenceBusy = true);
+    try {
+      await _api.silenceBuzzer(_detector.id);
+      _snack('Silencing the buzzer — it stops within a few seconds.');
+    } on ApiException catch (e) {
+      _snack('Could not silence the buzzer: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _silenceBusy = false);
     }
   }
 
@@ -215,6 +228,17 @@ class _DetectorScreenState extends State<DetectorScreen>
                 ),
               if (status == DetectorStatus.online)
                 StatusBanner(level: d.statusLevel ?? reading?.level ?? AlertLevel.safe),
+              if (d.liveLevel == AlertLevel.danger) ...[
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFE53935),
+                      minimumSize: const Size.fromHeight(48)),
+                  onPressed: _silenceBusy ? null : _silence,
+                  icon: const Icon(Icons.volume_off),
+                  label: const Text('Silence buzzer'),
+                ),
+              ],
               const SizedBox(height: 16),
               PpmGauge(ppm: mq5On ? reading?.gas : null, enabled: mq5On),
               const SizedBox(height: 16),

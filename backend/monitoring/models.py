@@ -91,6 +91,9 @@ class Detector(models.Model):
     # Level of the last DANGER/WARNING alert pushed to the owner; when the
     # detector reads SAFE again we push "back to normal" and clear it.
     alert_level = models.CharField(max_length=10, blank=True)
+    # Set when someone taps OK on an alarm in the app; handed to the ESP32
+    # once, in its next ingest response, so it silences its buzzer.
+    silence_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

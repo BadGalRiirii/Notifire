@@ -160,6 +160,7 @@ App endpoints require `Authorization: Token <token>`. Register and login return 
 |---|---|---|
 | GET / POST | `/api/detectors/` | List the user's detectors / create `{room, name?}` (blank name → "&lt;room&gt; Detector") |
 | GET / PATCH / DELETE | `/api/detectors/<id>/` | One detector; PATCH `{room, name, mq5_enabled}` |
+| POST | `/api/detectors/<id>/silence/` | Silence the detector's buzzer (owner or member); delivered with its next upload |
 | GET | `/api/detectors/<id>/readings/` | Recent raw readings (`?limit=50`) |
 | GET | `/api/detectors/<id>/readings/export/` | Raw readings as CSV (`?days=`, max 31) |
 | GET | `/api/logs/` | WARNING/DANGER history (`?level=DANGER&detector=<id>`) |
@@ -213,6 +214,7 @@ The APK is written to `build/app/outputs/flutter-apk/app-release.apk`.
 | **Device setup** | Finds the detector over Bluetooth and lists the 2.4 GHz networks it can see. Wi-Fi can be typed or scanned from a QR code. Setup shows live progress and clear errors. |
 | **Detector dashboard** | Status banner, gas gauge (0–4095, danger mark at 1500), temperature and humidity, an MQ-5 on/off toggle, and the room's history. |
 | **Push notifications** | Room-named danger and warning alerts, plus offline and back-online alerts. Tapping one opens that detector. |
+| **Silence buzzer** | Tap OK on a danger pop-up, or *Silence buzzer* on the room screen, to stop the detector's buzzer. The LED stays on, and the buzzer sounds again after 5 minutes if the danger is still there. |
 | **Household sharing** | Share a detector by email. Members see it live and get its alerts, but only the owner can edit it. |
 | **History & export** | Warning and danger logs across all rooms, filterable by level, exportable as CSV. |
 | **Settings** | Change name, email and password, turn each alert type on or off, log out, or delete the account. |
@@ -242,6 +244,7 @@ Settings survive power cuts. **Hold the BOOT button for 5 seconds** to reset a d
 ### Notes
 
 - The local LED and buzzer alarm works without Wi-Fi, including in setup mode.
+- The ingest response's `silence` flag (sent once after OK is tapped in the app) mutes the buzzer for the current alarm, for at most 5 minutes. While the buzzer is sounding, the detector uploads every 2 s so the silence arrives quickly.
 - The MQ-5 toggle in the app syncs to the board through the ingest response. Turning the MQ-5 off also mutes the local gas alarm, but the temperature and humidity alarms stay active.
 - Bluetooth is only active in setup mode. The Wi-Fi password travels over an unencrypted Bluetooth link during that short window, so set up detectors at home, not in public places.
 - The MQ-5 needs **at least 48 h of preheating** before its readings stabilize (Winsen datasheet). The 20-second warm-up at startup only covers the heater.

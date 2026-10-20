@@ -70,6 +70,7 @@ class HelpScreen extends StatelessWidget {
               'If the app is open, a red (danger) or yellow (warning) pop-up appears. Tap View details.',
               'If the app is closed, you get a notification. Tap it to see what happened.',
               'Alert details shows what triggered it, the readings at that moment, and how the room is right now.',
+              'To stop the detector\'s buzzer, tap OK on the red pop-up, or open the room and tap Silence buzzer. The light stays on, and the buzzer sounds again after 5 minutes if the danger is still there.',
               'Smoke can clear in seconds, so a room stays red (or yellow) for 1 minute after the last high reading. After a minute of safe readings, the alert changes to "back to normal" and still says what happened.',
               'Works anywhere: your phone does not need the home Wi-Fi. On another Wi-Fi or mobile data you still see live readings and get alerts. Only the detector needs the home Wi-Fi.',
               'If Settings shows "Alerts may be delayed", tap Allow so battery saving does not hold back alerts while NotiFire is closed.',
