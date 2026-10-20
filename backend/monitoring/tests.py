@@ -641,22 +641,41 @@ class SilenceTests(ApiTestCase):
 
     share = SharingTests.share
 
+    def silence(self):
+        r = self.client.post(f"{self.base}/silence/")
+        return r.status_code, r.json().get("silenced") if r.status_code == 200 else None
+
     def test_silence_is_handed_to_the_detector_once(self):
         code = self.kitchen["code"]
         self.assertFalse(self.ingest(code, gas=2000).json()["silence"])
-        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 204)
+        self.assertEqual(self.silence(), (200, True))
         self.assertTrue(self.ingest(code, gas=2000).json()["silence"])
         self.assertFalse(self.ingest(code, gas=2000).json()["silence"])
 
+    def test_ok_on_a_warning_does_not_mute_the_alarm_that_follows(self):
+        code = self.kitchen["code"]
+        self.ingest(code, gas=1300)  # WARNING: no buzzer yet
+        self.assertEqual(self.silence(), (200, False))
+        self.assertFalse(self.ingest(code, gas=2000).json()["silence"])
+
+    def test_ok_on_a_warning_silences_once_the_room_is_in_danger(self):
+        code = self.kitchen["code"]
+        self.ingest(code, gas=1300)
+        self.ingest(code, gas=2000)  # buzzer sounding; the WARNING pop-up is still open
+        self.assertEqual(self.silence(), (200, True))
+        self.assertTrue(self.ingest(code, gas=2000).json()["silence"])
+
     def test_household_member_can_silence_but_strangers_cannot(self):
         self.share("juan@example.com")
+        self.ingest(self.kitchen["code"], gas=2000)
         self.auth(self.juan_token)
-        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 204)
+        self.assertEqual(self.silence(), (200, True))
         self.auth(self.register(email="ana@example.com", name="Ana"))
-        self.assertEqual(self.client.post(f"{self.base}/silence/").status_code, 404)
-        self.assertTrue(self.ingest(self.kitchen["code"]).json()["silence"])
+        self.assertEqual(self.silence(), (404, None))
+        self.assertTrue(self.ingest(self.kitchen["code"], gas=2000).json()["silence"])
 
     def test_old_request_does_not_mute_a_later_alarm(self):
+        self.ingest(self.kitchen["code"], gas=2000)
         self.client.post(f"{self.base}/silence/")
         Detector.objects.update(silence_requested_at=timezone.now() - timedelta(minutes=5))
         self.assertFalse(self.ingest(self.kitchen["code"], gas=2000).json()["silence"])

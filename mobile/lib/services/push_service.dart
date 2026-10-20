@@ -20,12 +20,22 @@ class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
-  // Channel ids must match backend/monitoring/notifications.py.
-  static const alarmsChannel = AndroidNotificationChannel(
-    'notifire_alarms',
+  /// Long, strong buzzes for DANGER (ms: wait, buzz, pause, buzz, …).
+  static final dangerVibration = Int64List.fromList(
+      [0, 1500, 400, 1500, 400, 1500, 400, 1500, 400, 1500]);
+
+  // Channel ids must match backend/monitoring/notifications.py. Android
+  // never changes an existing channel's vibration, so this replaces the old
+  // 'notifire_alarms' channel (deleted in init).
+  static final alarmsChannel = AndroidNotificationChannel(
+    'notifire_danger',
     'Fire alarms',
-    description: 'DANGER alerts when a detector senses smoke, gas or heat.',
+    description: 'DANGER alerts when a detector senses smoke, gas or heat. '
+        'Strong vibration and alarm sound.',
     importance: Importance.max,
+    enableVibration: true,
+    vibrationPattern: dangerVibration,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
   );
   static const alertsChannel = AndroidNotificationChannel(
     'notifire_alerts',
@@ -76,6 +86,7 @@ class PushService {
     );
     final android = _local.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
+    await android?.deleteNotificationChannel(channelId: 'notifire_alarms');  // before 1.8.0
     await android?.createNotificationChannel(alarmsChannel);
     await android?.createNotificationChannel(alertsChannel);
 
@@ -155,7 +166,8 @@ class PushService {
       _liveAlerts.add(LiveAlert(
           kind: kind, title: n.title ?? '', body: n.body ?? '', target: target));
     }
-    final channel = kind == 'DANGER' ? alarmsChannel : alertsChannel;
+    final danger = kind == 'DANGER';
+    final channel = danger ? alarmsChannel : alertsChannel;
     await _local.show(
       id: target?.detectorId ?? message.hashCode,  // one per room: replaces
       title: n.title,
@@ -170,9 +182,23 @@ class PushService {
           priority: Priority.high,
           icon: 'ic_stat_notifire',
           color: const Color(0xFFE53935),
+          vibrationPattern: danger ? dangerVibration : null,
+          category: danger ? AndroidNotificationCategory.alarm : null,
+          audioAttributesUsage: channel.audioAttributesUsage,
+          // DANGER keeps vibrating and sounding until the pop-up is
+          // answered (stopAlarm) or the notification is opened.
+          additionalFlags: danger ? Int32List.fromList([_flagInsistent]) : null,
         ),
       ),
     );
+  }
+
+  static const _flagInsistent = 4;  // Android Notification.FLAG_INSISTENT
+
+  /// Stops a DANGER notification's repeating vibration and sound.
+  Future<void> stopAlarm(int detectorId) async {
+    if (!_available) return;
+    await _local.cancel(id: detectorId);
   }
 
 }

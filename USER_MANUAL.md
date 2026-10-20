@@ -109,8 +109,10 @@ Normal humid weather (75–84 %) does **not** cause a warning.
   - **what triggered it** (e.g. *Smoke or gas detected, level 2346*),
   - **the readings at that moment**, with the one over its limit highlighted,
   - **how the room is right now** (e.g. *Back to normal*).
-- **Silencing the buzzer:** tap **OK** on a red pop-up, or open the room and
-  tap **Silence buzzer**. The buzzer stops within a few seconds, but the
+- **DANGER alerts vibrate your phone strongly** with an alarm sound. While
+  the app is open, the phone keeps vibrating until you answer the pop-up.
+- **Silencing the buzzer:** tap **OK** on the alert pop-up, or open the room
+  and tap **Silence buzzer**. The buzzer stops within a few seconds, but the
   detector's light stays on. If the danger is still there after **5 minutes**,
   the buzzer sounds again. Only silence it once you know the room is safe or
   someone is dealing with it.

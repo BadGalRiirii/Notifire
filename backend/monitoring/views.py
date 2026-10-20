@@ -178,14 +178,19 @@ def leave_detector(request, pk):
 
 @api_view(["POST"])
 def silence_buzzer(request, pk):
-    """Someone tapped OK on an alarm (owner or member: anyone it alerts).
+    """Someone tapped OK on an alert (owner or member: anyone it alerts).
     The detector gets this with its next upload and stops its buzzer; its
     LED stays on, and the buzzer sounds again if the danger outlasts the
-    firmware's silence period."""
+    firmware's silence period.
+
+    Only while the room is in DANGER (the buzzer is sounding): OK on an
+    earlier WARNING must not pre-mute an alarm that starts seconds later."""
     detector = get_object_or_404(accessible_detectors(request.user), pk=pk)
+    if held_level(detector) != Level.DANGER:
+        return Response({"silenced": False})
     detector.silence_requested_at = timezone.now()
     detector.save(update_fields=["silence_requested_at"])
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    return Response({"silenced": True})
 
 
 @api_view(["GET"])

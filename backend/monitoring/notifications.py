@@ -20,7 +20,10 @@ from .models import DetectionLog, Detector, Level, PushDevice
 logger = logging.getLogger(__name__)
 
 # Android notification channels (created by the app; ids must match).
-CHANNEL_ALARMS = "notifire_alarms"   # DANGER — max importance, alarm sound
+# DANGER — max importance, alarm sound, long strong vibration. A new id
+# because Android never changes an existing channel's vibration; apps older
+# than 1.8.0 lack it and fall back to the manifest's default (notifire_alerts).
+CHANNEL_ALARMS = "notifire_danger"
 CHANNEL_ALERTS = "notifire_alerts"   # WARNING / offline — high importance
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="fcm")

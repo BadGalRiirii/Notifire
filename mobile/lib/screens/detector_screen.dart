@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/live_poll.dart';
+import '../services/push_service.dart';
 import '../widgets/detector_sheets.dart';
 import '../widgets/household_sheet.dart';
 import '../widgets/notice.dart';
@@ -64,8 +65,11 @@ class _DetectorScreenState extends State<DetectorScreen>
   Future<void> _silence() async {
     setState(() => _silenceBusy = true);
     try {
-      await _api.silenceBuzzer(_detector.id);
-      _snack('Silencing the buzzer — it stops within a few seconds.');
+      final silenced = await _api.silenceBuzzer(_detector.id);
+      PushService.instance.stopAlarm(_detector.id);
+      _snack(silenced
+          ? 'Silencing the buzzer — it stops within a few seconds.'
+          : 'The alarm is already over.');
     } on ApiException catch (e) {
       _snack('Could not silence the buzzer: ${e.message}');
     } finally {

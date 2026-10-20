@@ -138,21 +138,25 @@ class _NotiFireAppState extends State<NotiFireApp> with WidgetsBindingObserver {
       ),
     );
     _popupShowing = false;
+    PushService.instance.stopAlarm(alert.target.detectorId);  // stop the phone vibrating
     if (viewDetails == true) {
       _open(alert.target);
-    } else if (viewDetails == false && danger) {
+    } else if (viewDetails == false) {
       _silence(alert.target.detectorId);
     }
   }
 
-  /// OK on a DANGER pop-up: stop that detector's buzzer.
+  /// OK on a pop-up: stop that detector's buzzer. Sent for WARNING too: a
+  /// DANGER that followed while the WARNING pop-up was open gets no pop-up
+  /// of its own. The server only silences while the room is in DANGER.
   Future<void> _silence(int detectorId) async {
     final context = _navigatorKey.currentContext;
     final messenger = context == null ? null : ScaffoldMessenger.maybeOf(context);
     try {
-      await ApiService().silenceBuzzer(detectorId);
-      messenger?.showSnackBar(const SnackBar(
-          content: Text('Silencing the buzzer — it stops within a few seconds.')));
+      if (await ApiService().silenceBuzzer(detectorId)) {
+        messenger?.showSnackBar(const SnackBar(
+            content: Text('Silencing the buzzer — it stops within a few seconds.')));
+      }
     } on ApiException catch (e) {
       messenger?.showSnackBar(SnackBar(content: Text('Could not silence the buzzer: ${e.message}')));
     }
